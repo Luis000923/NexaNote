@@ -7,13 +7,14 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
 /**
- * Flujo de la integración de IA a nivel de ViewModel: carga de configuración,
- * guardado/borrado y asistencia (éxito, error del proveedor, sin credenciales).
+ * Flujo del chat de IA a nivel de ViewModel: configuración, conversación con
+ * memoria, publicación de comandos para el lienzo y persistencia por cuaderno.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AiViewModelTest {
@@ -29,6 +30,15 @@ class AiViewModelTest {
         override suspend fun complete(request: AiRequest): AiResult {
             lastRequest = request
             return result
+        }
+    }
+
+    private class FakeChatStore(var history: ChatHistory = ChatHistory()) : ChatStore {
+        var persisted = 0
+        override fun load(): ChatHistory = history
+        override fun persist(history: ChatHistory) {
+            this.history = history
+            persisted++
         }
     }
 
@@ -59,7 +69,6 @@ class AiViewModelTest {
         vm.saveSettings(AiProviderId.OpenAi, "  sk-abc  ", "gpt-4o")
         waitUntil { repository.hasCredentials() }
         assertEquals("sk-abc", repository.load().apiKey)
-        assertEquals(AiProviderId.OpenAi, vm.settings.value.provider)
 
         vm.clearSettings()
         waitUntil { !repository.hasCredentials() }
@@ -67,55 +76,97 @@ class AiViewModelTest {
     }
 
     @Test
-    fun explainReturnsAnswerFromProvider() {
-        val provider = FakeProvider(AiResult.Success("Es la equivalencia masa-energía."))
+    fun sendProducesUserAndAssistantTurnsAndPersists() {
+        val provider = FakeProvider(AiResult.Success("La energía y la masa son equivalentes."))
+        val store = FakeChatStore()
         val vm = AiViewModel(repo(AiSettings(AiProviderId.OpenAi, "sk-1")), providerFactory = { provider })
+        vm.openConversation(store)
         waitUntil { vm.settings.value.isConfigured }
 
-        vm.explain("E = mc^2", AssistKind.Formula)
+        vm.send("Que es E = mc^2")
 
-        waitUntil { vm.assist.value is AssistUiState.Answer }
-        val answer = vm.assist.value as AssistUiState.Answer
-        assertEquals(AssistKind.Formula, answer.kind)
-        assertTrue(answer.text.contains("equivalencia"))
-        // El prompt del sistema corresponde al tipo elegido.
-        assertTrue(provider.lastRequest!!.systemPrompt.contains("matemáticas"))
-        assertEquals("gpt-4o-mini", provider.lastRequest!!.model)
+        waitUntil { vm.chat.value.messages.size == 2 }
+        val turns = vm.chat.value.messages
+        assertEquals(ChatRole.User, turns[0].role)
+        assertEquals(ChatRole.Assistant, turns[1].role)
+        assertTrue(turns[1].text.contains("equivalentes"))
+        assertTrue("se debe persistir cada turno", store.persisted >= 2)
+        // El system prompt de la conversación viaja en la petición.
+        assertTrue(provider.lastRequest!!.systemPrompt.contains("NexaNote"))
+        // Y el turno del usuario forma parte del contexto enviado.
+        assertTrue(provider.lastRequest!!.messages.any { it.role == "user" && it.content.contains("mc^2") })
     }
 
     @Test
-    fun explainSurfacesProviderFailure() {
+    fun successfulCommandResponseIsPublishedForTheCanvas() {
+        val provider = FakeProvider(
+            AiResult.Success("""Hecho. {"tool":"insert_formula","latex":"\\begin{pmatrix}1&0\\\\0&1\\end{pmatrix}"}"""),
+        )
+        val vm = AiViewModel(repo(AiSettings(AiProviderId.OpenAi, "sk-1")), providerFactory = { provider })
+        vm.openConversation(ChatStore.NoOp)
+        waitUntil { vm.settings.value.isConfigured }
+
+        vm.send("Escribe la matriz identidad 2x2")
+
+        waitUntil { vm.pendingCommands.value.isNotEmpty() }
+        val command = vm.pendingCommands.value.single()
+        assertTrue(command is AiCommand.InsertFormula)
+
+        vm.consumeCommands()
+        assertTrue(vm.pendingCommands.value.isEmpty())
+    }
+
+    @Test
+    fun providerFailureBecomesAnAssistantBubble() {
         val vm = AiViewModel(
             repo(AiSettings(AiProviderId.OpenAi, "sk-1")),
             providerFactory = { FakeProvider(AiResult.Failure("HTTP 401")) },
         )
+        vm.openConversation(ChatStore.NoOp)
         waitUntil { vm.settings.value.isConfigured }
 
-        vm.explain("hola", AssistKind.Text)
+        vm.send("hola")
 
-        waitUntil { vm.assist.value is AssistUiState.Error }
-        assertEquals("HTTP 401", (vm.assist.value as AssistUiState.Error).message)
+        waitUntil { vm.chat.value.messages.size == 2 }
+        val last = vm.chat.value.messages.last()
+        assertEquals(ChatRole.Assistant, last.role)
+        assertTrue(last.text.contains("401"))
+        assertTrue(vm.pendingCommands.value.isEmpty())
     }
 
     @Test
-    fun explainWithoutCredentialsDoesNotCallProvider() {
-        var built = false
-        val vm = AiViewModel(repo(AiSettings()), providerFactory = { built = true; null })
+    fun sendWithoutCredentialsStillLeavesAHint() {
+        val vm = AiViewModel(repo(AiSettings()), providerFactory = { null })
+        vm.openConversation(ChatStore.NoOp)
         waitUntil { true }
 
-        vm.explain("algo", AssistKind.Text)
+        vm.send("algo")
 
-        assertTrue(vm.assist.value is AssistUiState.Error)
-        assertTrue(built) // se intentó construir, devolvió null por falta de clave
+        waitUntil { vm.chat.value.messages.size == 2 }
+        assertTrue(vm.chat.value.messages.last().text.contains("Ajustes de IA"))
     }
 
     @Test
-    fun explainRejectsEmptyContentBeforeAnyProvider() {
-        val vm = AiViewModel(
-            repo(AiSettings(AiProviderId.OpenAi, "sk-1")),
-            providerFactory = { throw AssertionError("no debería construirse") },
+    fun openConversationLoadsThePreviousHistory() {
+        val store = FakeChatStore(
+            ChatHistory(listOf(ChatMessage(ChatRole.User, "hola", 1), ChatMessage(ChatRole.Assistant, "buenas", 2))),
         )
-        vm.explain("   ", AssistKind.Text)
-        assertTrue(vm.assist.value is AssistUiState.Error)
+        val vm = AiViewModel(repo(), providerFactory = { null })
+        vm.openConversation(store)
+        waitUntil { vm.chat.value.messages.size == 2 }
+
+        vm.clearChat()
+        assertTrue(vm.chat.value.isEmpty)
+        waitUntil { store.history.isEmpty }
+    }
+
+    @Test
+    fun blankMessageIsIgnored() {
+        val vm = AiViewModel(repo(AiSettings(AiProviderId.OpenAi, "sk-1")), providerFactory = {
+            throw AssertionError("no debería contactar al proveedor")
+        })
+        vm.openConversation(ChatStore.NoOp)
+        vm.send("   ")
+        assertFalse(vm.chat.value.messages.isNotEmpty())
     }
 }

@@ -58,6 +58,33 @@ class AiRequestBodiesTest {
     }
 
     @Test
+    fun openAiBodyCarriesTheWholeConversation() {
+        val conversation = request.copy(
+            systemPrompt = "system",
+            messages = listOf(
+                AiMessage("user", "hola"),
+                AiMessage("assistant", "buenas"),
+                AiMessage("user", "sigue"),
+            ),
+        )
+        val body = AiRequestBodies.openAi(conversation)
+        assertTrue(body.contains("\"role\":\"system\""))
+        assertEquals(2, Regex("\\\"role\\\":\\\"user\\\"").findAll(body).count())
+        assertTrue(body.contains("\"role\":\"assistant\",\"content\":\"buenas\""))
+    }
+
+    @Test
+    fun anthropicBodyCarriesTheWholeConversationWithoutSystemRole() {
+        val conversation = request.copy(
+            messages = listOf(AiMessage("user", "hola"), AiMessage("assistant", "hey"), AiMessage("user", "ya")),
+        )
+        val body = AiRequestBodies.anthropic(conversation)
+        assertFalse(body.contains("\"role\":\"system\""))
+        assertTrue(body.contains("\"messages\":[{\"role\":\"user\",\"content\":\"hola\"}"))
+        assertTrue(body.contains("{\"role\":\"assistant\",\"content\":\"hey\"}"))
+    }
+
+    @Test
     fun escapeHandlesControlCharactersAndBackslash() {
         assertEquals("\"a\\u0001b\"", AiRequestBodies.str("a\u0001b"))
         assertEquals("\"\\\\\"", AiRequestBodies.str("\\"))

@@ -49,6 +49,41 @@ autosave offline-first y exportación a PDF (futuro).
 **13: Gestión de cuadernos (pantalla de inicio), lienzo infinito además de A4,
 selección de área con movimiento/duplicado/borrado contextual, y paleta de color
 de tinta y relleno.**
+14–15: Trazo de alta frecuencia en dos capas, nueva página, selector de grosor
+del lápiz y captura de trazo de baja latencia.
+**16: IA conversacional con memoria por cuaderno, escritura/dibujo autónomo de la
+IA en el lienzo (comandos JSON -> FFI), panel de chat con teclado y edición
+manual del contenido fuente de textos y fórmulas.**
+
+### Novedades de la Fase 16
+
+- **Sin cambios en Rust/FFI**: Kotlin sólo orquesta.
+- **`app/.../ai/`** (nuevo): `ChatMessage.kt` (`ChatRole`, `ChatMessage`,
+  `ChatHistory` acotado a 40 turnos), `ChatStore.kt` (interfaz + `NoOp`),
+  `ChatHistoryCodec.kt` (JSON defensivo), `AiCommand.kt`
+  (`InsertText/InsertFormula/InsertGraph`), `AiCommandParser.kt` (extrae objetos
+  JSON de la respuesta por emparejado de llaves; tolera alucinaciones, nunca
+  lanza), `AiConversation.kt` (system prompt estricto sin emojis + mapeo de
+  historial). `AiProvider` gana `AiMessage` + `AiRequest.messages` (multi-turno);
+  `AiRequestBodies` serializa la conversación completa.
+- **`AiViewModel`**: `chat`/`sending`/`pendingCommands` StateFlows, `send()`,
+  `openConversation(ChatStore)` (lo reasigna `MainActivity` por cuaderno),
+  `clearChat()`, `consumeCommands()`. `explain()` se reencamina como un mensaje.
+  Se elimina `AssistUiState`/`AssistDialog`.
+- **`NotebookLibrary`**: `chatStoreFor(id)` -> `<id>.chat` con escritura atómica;
+  `delete` lo borra también.
+- **`DocumentViewModel`**: `insertAiElements(commands, cx, cy)` (traduce cada
+  comando a `commitText/Formula/Graph`, apila en vertical, un solo registro de
+  historial, descarta los que el núcleo rechace) y `editElement(id, kind, src,
+  x, y)` (borrar + recrear vía FFI, un solo `edit {}`). Enum `ElementSourceKind`.
+- **UI**: `AiChatPanel` (burbujas + `TextField` + `NexaIcons.Send`), botón
+  **Editar** (`NexaIcons.Edit`) en `SelectionBar` cuando hay un único texto o
+  fórmula seleccionado (usa `scene.hits`/`scene.primitives` en el mismo orden),
+  `EntryDialog` con `initial`. `DocumentScreen` recoge `pendingCommands` y los
+  inserta en el centro del viewport (`onSizeChanged` + `transform.screenToModel`).
+- **Dependencia nueva (sólo tests)**: `org.json:json` (`testImplementation`), para
+  poder cubrir en JVM el parseo de comandos y el códec del historial (el `org.json`
+  de Android es un stub que lanza en tests unitarios).
 
 ### Novedades de la Fase 13
 

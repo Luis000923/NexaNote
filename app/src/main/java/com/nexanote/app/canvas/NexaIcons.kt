@@ -681,6 +681,44 @@ object NexaIcons {
         }
     }
 
+    /** Enviar: avión de papel. */
+    val Send: ImageVector by lazy {
+        vector("nexa_send") {
+            moveTo(3f, 3f)
+            lineTo(21f, 12f)
+            lineTo(3f, 21f)
+            lineTo(6f, 13f)
+            lineTo(15f, 12f)
+            lineTo(6f, 11f)
+            close()
+        }
+    }
+
+    /** Editar: lápiz sobre una línea base. */
+    val Edit: ImageVector by lazy {
+        vector("nexa_edit") {
+            // Cuerpo del lápiz en diagonal.
+            moveTo(13.5f, 4.5f)
+            lineTo(17f, 8f)
+            lineTo(8f, 17f)
+            lineTo(4.5f, 17f)
+            lineTo(4.5f, 13.5f)
+            close()
+            // Punta / capuchón.
+            moveTo(15f, 3f)
+            lineTo(18.5f, 6.5f)
+            lineTo(20f, 5f)
+            lineTo(16.5f, 1.5f)
+            close()
+            // Línea base.
+            moveTo(4f, 20f)
+            lineTo(20f, 20f)
+            lineTo(20f, 22f)
+            lineTo(4f, 22f)
+            close()
+        }
+    }
+
     /** Lienzo infinito: el lazo del símbolo de infinito. */
     val InfiniteCanvas: ImageVector by lazy {
         vector("nexa_infinite_canvas", PathFillType.EvenOdd) {

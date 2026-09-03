@@ -74,6 +74,7 @@ class MainActivity : ComponentActivity() {
                         DocumentScreen(
                             viewModel = viewModel,
                             aiViewModel = aiViewModel,
+                            chatStore = library.chatStoreFor(current.id),
                             title = current.title,
                             onBack = {
                                 viewModel.flush()

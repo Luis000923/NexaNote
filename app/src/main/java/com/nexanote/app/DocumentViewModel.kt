@@ -1,6 +1,7 @@
 package com.nexanote.app
 
 import android.graphics.Bitmap
+import com.nexanote.app.ai.AiCommand
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nexanote.app.canvas.FormulaInput
@@ -43,6 +44,9 @@ sealed interface SceneUiState {
 
 /** Estado de los controles de historial (habilitar/deshabilitar Undo y Redo). */
 data class HistoryUiState(val canUndo: Boolean = false, val canRedo: Boolean = false)
+
+/** Tipo de elemento cuyo contenido fuente se puede reabrir y editar con el teclado. */
+enum class ElementSourceKind { Text, Formula }
 
 /**
  * Estado del navegador de páginas: en qué página está la vista (`index`, base 0) y
@@ -256,6 +260,83 @@ class DocumentViewModel(
         val (w, h) = ImageInput.fitFrame(natW, natH)
         edit {
             core.documentAddImage(doc, page, ImageInput.toImageJson(image.source, x, y, w, h, natW, natH))
+        }
+    }
+
+    // -- Inserción y edición asistidas por IA (Fase 16) --------------------
+    // La IA decide *qué* insertar (comandos JSON ya parseados); el núcleo Rust
+    // sigue siendo la autoridad sobre la validez. Aquí sólo se traduce cada
+    // comando a la inserción FFI correspondiente y se apila en vertical.
+
+    /**
+     * Aplica en lote los [commands] que pidió la IA, empezando en
+     * `(originX, originY)` (centro del viewport) y apilando cada elemento
+     * [STACK_STEP] px más abajo. Los comandos que el núcleo rechace (alucinaciones,
+     * LaTeX inválido) se descartan sin abortar el resto. Todo el lote entra como
+     * **una** edición del historial.
+     */
+    fun insertAiElements(commands: List<AiCommand>, originX: Float, originY: Float) {
+        if (commands.isEmpty()) return
+        val base = documentJson ?: return
+        val page = pageId ?: return
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.Default) {
+                runCatching {
+                    var doc = base
+                    var added = 0
+                    commands.forEachIndexed { i, command ->
+                        val y = originY + i * STACK_STEP
+                        val next = runCatching {
+                            when (command) {
+                                is AiCommand.InsertText ->
+                                    core.documentAddText(doc, page, TextInput.toTextJson(command.text, originX, y))
+                                is AiCommand.InsertFormula ->
+                                    core.documentAddFormula(doc, page, FormulaInput.toFormulaJson(command.latex, originX, y))
+                                is AiCommand.InsertGraph ->
+                                    core.documentAddGraph(
+                                        doc,
+                                        page,
+                                        GraphInput.toGraphJson(command.expression, command.xMin, command.xMax, originX, y),
+                                    )
+                            }
+                        }.getOrNull()
+                        if (next != null) {
+                            doc = next
+                            added++
+                        }
+                    }
+                    if (added == 0) null else doc to renderScene(doc, pageIndex)
+                }
+            }
+            result.getOrNull()?.let { (updated, scene) ->
+                documentJson = updated
+                publishPages(updated)
+                _selection.value = Selection.Empty
+                _state.value = SceneUiState.Ready(scene)
+                withContext(Dispatchers.Default) { historyController.record(updated) }
+                publishHistory()
+                autosave(updated)
+            }
+        }
+    }
+
+    /**
+     * Reemplaza el contenido fuente de un bloque de texto o fórmula por
+     * [newSource], conservando su posición `(x, y)`. Implementado como
+     * borrar + recrear vía FFI: una sola entrada de historial.
+     */
+    fun editElement(elementId: String, kind: ElementSourceKind, newSource: String, x: Float, y: Float) {
+        val trimmed = newSource.trim()
+        if (trimmed.isEmpty()) return
+        val doc = documentJson ?: return
+        val page = pageId ?: return
+        val idsJson = SelectionInput.toIdsJson(listOf(elementId))
+        edit(keepSelection = false) {
+            val without = core.documentRemoveElements(doc, page, idsJson)
+            when (kind) {
+                ElementSourceKind.Text -> core.documentAddText(without, page, TextInput.toTextJson(trimmed, x, y))
+                ElementSourceKind.Formula -> core.documentAddFormula(without, page, FormulaInput.toFormulaJson(trimmed, x, y))
+            }
         }
     }
 
@@ -580,5 +661,8 @@ class DocumentViewModel(
 
     private companion object {
         const val AUTOSAVE_DEBOUNCE_MS = 600L
+
+        /** Separación vertical (px de documento) entre elementos que inserta la IA. */
+        const val STACK_STEP = 44f
     }
 }

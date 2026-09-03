@@ -44,10 +44,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -62,7 +65,9 @@ import com.nexanote.app.canvas.NexaPalette
 import com.nexanote.app.canvas.Selection
 import com.nexanote.app.canvas.StrokeColor
 import com.nexanote.app.canvas.StrokeGesture
+import com.nexanote.app.canvas.ScenePrimitive
 import com.nexanote.app.ai.AiViewModel
+import com.nexanote.app.ai.ChatStore
 
 /**
  * Pantalla de edición de un cuaderno: pinta el documento del núcleo Rust con
@@ -75,6 +80,8 @@ import com.nexanote.app.ai.AiViewModel
 fun DocumentScreen(
     viewModel: DocumentViewModel = viewModel(),
     aiViewModel: AiViewModel,
+    /** Persistencia de la conversación de IA de este cuaderno (Fase 16). */
+    chatStore: ChatStore = ChatStore.NoOp,
     /** Título del cuaderno abierto, mostrado en la barra superior. */
     title: String = "NexaNote",
     /** Vuelve al explorador de cuadernos; `null` oculta el botón de volver. */
@@ -89,9 +96,16 @@ fun DocumentScreen(
     val strokeWidth by viewModel.strokeWidth.collectAsState()
 
     val aiSettings by aiViewModel.settings.collectAsState()
-    val assist by aiViewModel.assist.collectAsState()
+    val chat by aiViewModel.chat.collectAsState()
+    val sending by aiViewModel.sending.collectAsState()
+    val pendingCommands by aiViewModel.pendingCommands.collectAsState()
     var showAiSettings by remember { mutableStateOf(false) }
-    var showAssistant by remember { mutableStateOf(false) }
+    var showChat by remember { mutableStateOf(false) }
+
+    // Tamaño real del lienzo, para colocar en su centro lo que inserte la IA.
+    var canvasSize by remember { mutableStateOf(IntSize(1000, 1600)) }
+
+    LaunchedEffect(Unit) { aiViewModel.openConversation(chatStore) }
 
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -135,7 +149,7 @@ fun DocumentScreen(
                     ) {
                         Icon(NexaIcons.PageAdd, contentDescription = "Nueva página")
                     }
-                    IconButton(onClick = { showAssistant = true }) {
+                    IconButton(onClick = { showChat = true }) {
                         Icon(NexaIcons.Assistant, contentDescription = "Asistente de IA")
                     }
                     IconButton(onClick = { showAiSettings = true }) {
@@ -160,7 +174,8 @@ fun DocumentScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                .onSizeChanged { if (it.width > 0 && it.height > 0) canvasSize = it },
             contentAlignment = Alignment.Center,
         ) {
             when (val s = state) {
@@ -201,6 +216,25 @@ fun DocumentScreen(
                     var pendingImage by remember(s.scene.pageId) {
                         mutableStateOf<Pair<Float, Float>?>(null)
                     }
+                    // Elemento (texto o fórmula) abierto para editar su contenido con el teclado.
+                    var pendingEdit by remember(s.scene.pageId) {
+                        mutableStateOf<EditTarget?>(null)
+                    }
+
+                    // Lo que la IA pidió insertar se coloca en el centro del viewport.
+                    LaunchedEffect(pendingCommands) {
+                        if (pendingCommands.isNotEmpty()) {
+                            val (cx, cy) = transform.screenToModel(
+                                canvasSize.width / 2f,
+                                canvasSize.height / 2f,
+                            )
+                            viewModel.insertAiElements(pendingCommands, cx, cy)
+                            aiViewModel.consumeCommands()
+                        }
+                    }
+
+                    // Único elemento seleccionado que se puede reabrir para editar.
+                    val editable: EditTarget? = editTargetFor(selection, s.scene)
 
                     val context = LocalContext.current
                     val scope = rememberCoroutineScope()
@@ -288,6 +322,20 @@ fun DocumentScreen(
                             },
                         )
                     }
+                    pendingEdit?.let { target ->
+                        EntryDialog(
+                            title = if (target.kind == ElementSourceKind.Text) "Editar texto" else "Editar fórmula",
+                            label = "Contenido",
+                            initial = target.source,
+                            confirmLabel = "Guardar",
+                            onDismiss = { pendingEdit = null },
+                            onConfirm = { content ->
+                                viewModel.editElement(target.id, target.kind, content, target.x, target.y)
+                                viewModel.clearSelection()
+                                pendingEdit = null
+                            },
+                        )
+                    }
                     ToolPalette(
                         modifier = Modifier
                             .align(Alignment.BottomStart)
@@ -343,6 +391,8 @@ fun DocumentScreen(
                                 .align(Alignment.TopCenter)
                                 .padding(16.dp),
                             canFill = selection.hasFillable(s.scene.hits),
+                            canEdit = editable != null,
+                            onEdit = { pendingEdit = editable },
                             onDelete = viewModel::deleteSelection,
                             onDuplicate = viewModel::duplicateSelection,
                             onInk = { palette = PaletteMode.Ink },
@@ -405,20 +455,47 @@ fun DocumentScreen(
         )
     }
 
-    if (showAssistant) {
-        AssistDialog(
-            state = assist,
-            onDismiss = {
-                showAssistant = false
-                aiViewModel.dismissAssist()
-            },
-            onExplain = aiViewModel::explain,
+    if (showChat) {
+        AiChatPanel(
+            history = chat,
+            sending = sending,
+            configured = aiSettings.isConfigured,
+            onSend = aiViewModel::send,
+            onClear = aiViewModel::clearChat,
+            onDismiss = { showChat = false },
         )
     }
 }
 
 /** Qué está eligiendo la paleta de color abierta. */
 private enum class PaletteMode { Ink, Fill }
+
+/** Un elemento seleccionado cuyo contenido fuente se puede reabrir para editarlo. */
+private data class EditTarget(
+    val id: String,
+    val kind: ElementSourceKind,
+    val source: String,
+    val x: Float,
+    val y: Float,
+)
+
+/**
+ * Devuelve el [EditTarget] si hay **exactamente un** elemento seleccionado y es un
+ * bloque de texto o una fórmula. `hits` y `primitives` de la escena van en el
+ * mismo orden (ver `RenderModels.kt`), así que basta con localizar el índice del
+ * id y leer su primitiva.
+ */
+private fun editTargetFor(selection: Selection, scene: com.nexanote.app.canvas.ScenePage): EditTarget? {
+    val id = selection.ids.singleOrNull() ?: return null
+    val index = scene.hits.indexOfFirst { it.id == id }.takeIf { it >= 0 } ?: return null
+    return when (val primitive = scene.primitives.getOrNull(index)) {
+        is ScenePrimitive.Text ->
+            EditTarget(id, ElementSourceKind.Text, primitive.content, primitive.origin.x, primitive.origin.y)
+        is ScenePrimitive.Formula ->
+            EditTarget(id, ElementSourceKind.Formula, primitive.latex, primitive.origin.x, primitive.origin.y)
+        else -> null
+    }
+}
 
 /** Herramientas disponibles, en el orden de la barra. */
 private val TOOLS: List<Pair<DrawingTool, Pair<ImageVector, String>>> = listOf(
@@ -442,8 +519,10 @@ private fun EntryDialog(
     label: String,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
+    initial: String = "",
+    confirmLabel: String = "Añadir",
 ) {
-    var content by remember { mutableStateOf("") }
+    var content by remember(initial) { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -459,7 +538,7 @@ private fun EntryDialog(
             TextButton(
                 onClick = { onConfirm(content) },
                 enabled = content.isNotBlank(),
-            ) { Text("Añadir") }
+            ) { Text(confirmLabel) }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancelar") }
@@ -663,6 +742,8 @@ private fun PageNavigator(
 private fun SelectionBar(
     modifier: Modifier,
     canFill: Boolean,
+    canEdit: Boolean,
+    onEdit: () -> Unit,
     onDelete: () -> Unit,
     onDuplicate: () -> Unit,
     onInk: () -> Unit,
@@ -675,6 +756,9 @@ private fun SelectionBar(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            IconButton(onClick = onEdit, enabled = canEdit) {
+                Icon(NexaIcons.Edit, contentDescription = "Editar el contenido")
+            }
             IconButton(onClick = onDelete) {
                 Icon(NexaIcons.Delete, contentDescription = "Eliminar la selección")
             }

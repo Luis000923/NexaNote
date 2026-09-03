@@ -6,19 +6,31 @@ enum class AssistKind(val label: String) {
     Formula("Fórmula"),
 }
 
+/** Un turno de conversación tal y como lo consume un proveedor (`user`/`assistant`). */
+data class AiMessage(val role: String, val content: String)
+
 /**
  * Petición al asistente, ya independiente del proveedor concreto. El
- * [systemPrompt] fija el rol ("eres un tutor…") y [userPrompt] es el contenido a
- * explicar.
+ * [systemPrompt] fija el rol y [userPrompt] es el turno del usuario en las
+ * llamadas de un solo tiro (p. ej. "explica esto").
+ *
+ * Para una conversación con memoria se rellena [messages] con el historial
+ * completo; si va vacío, el proveedor usa `[user: userPrompt]`.
  */
 data class AiRequest(
     val systemPrompt: String,
     val userPrompt: String,
     val model: String,
+    /** Historial de turnos; vacío = petición de un solo tiro con [userPrompt]. */
+    val messages: List<AiMessage> = emptyList(),
     /** Cota superior de tokens de la respuesta; los proveedores la respetan. */
     val maxTokens: Int = 600,
     val temperature: Double = 0.2,
-)
+) {
+    /** Turnos efectivos: el historial si lo hay, o el turno único de [userPrompt]. */
+    val effectiveMessages: List<AiMessage>
+        get() = messages.ifEmpty { listOf(AiMessage("user", userPrompt)) }
+}
 
 /** Resultado de una llamada al asistente. Nunca contiene la API key. */
 sealed interface AiResult {
@@ -36,19 +48,4 @@ interface AiProvider {
 
     /** Ejecuta la petición. No lanza: los fallos se devuelven como [AiResult.Failure]. */
     suspend fun complete(request: AiRequest): AiResult
-}
-
-/**
- * Construye el prompt del sistema según el tipo de contenido. Puro: se prueba en
- * la JVM.
- */
-object AssistPrompt {
-    fun system(kind: AssistKind): String = when (kind) {
-        AssistKind.Text ->
-            "Eres un tutor que explica de forma clara y concisa, en español. " +
-                "Explica el siguiente texto de un cuaderno de estudio, resaltando las ideas clave."
-        AssistKind.Formula ->
-            "Eres un tutor de matemáticas que explica en español. Explica paso a paso qué " +
-                "representa la siguiente expresión o fórmula, qué significan sus símbolos y para qué se usa."
-    }
 }

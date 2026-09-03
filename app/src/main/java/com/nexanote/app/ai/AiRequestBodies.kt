@@ -13,8 +13,11 @@ object AiRequestBodies {
         append('{')
         append("\"model\":").append(str(request.model)).append(',')
         append("\"messages\":[")
-        append("{\"role\":\"system\",\"content\":").append(str(request.systemPrompt)).append("},")
-        append("{\"role\":\"user\",\"content\":").append(str(request.userPrompt)).append('}')
+        append("{\"role\":\"system\",\"content\":").append(str(request.systemPrompt)).append('}')
+        for (m in request.effectiveMessages) {
+            append(",{\"role\":").append(str(m.role))
+            append(",\"content\":").append(str(m.content)).append('}')
+        }
         append("],")
         append("\"max_tokens\":").append(request.maxTokens).append(',')
         append("\"temperature\":").append(request.temperature)
@@ -29,7 +32,11 @@ object AiRequestBodies {
         append("\"temperature\":").append(request.temperature).append(',')
         append("\"system\":").append(str(request.systemPrompt)).append(',')
         append("\"messages\":[")
-        append("{\"role\":\"user\",\"content\":").append(str(request.userPrompt)).append('}')
+        request.effectiveMessages.forEachIndexed { i, m ->
+            if (i > 0) append(',')
+            append("{\"role\":").append(str(m.role))
+            append(",\"content\":").append(str(m.content)).append('}')
+        }
         append("]}")
     }
 

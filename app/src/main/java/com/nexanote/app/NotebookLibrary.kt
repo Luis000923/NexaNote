@@ -1,6 +1,9 @@
 package com.nexanote.app
 
 import android.content.Context
+import com.nexanote.app.ai.ChatHistory
+import com.nexanote.app.ai.ChatHistoryCodec
+import com.nexanote.app.ai.ChatStore
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -88,11 +91,13 @@ class NotebookLibrary(context: Context) {
         return notebook
     }
 
-    /** Borra el cuaderno y su documento. Es irreversible. */
+    /** Borra el cuaderno, su documento y su conversación de IA. Es irreversible. */
     fun delete(id: String) {
         documentFile(id).delete()
         metaFile(id).delete()
         tempFile(id).delete()
+        chatFile(id).delete()
+        chatTempFile(id).delete()
     }
 
     /**
@@ -113,9 +118,14 @@ class NotebookLibrary(context: Context) {
     /** [DocumentStore] que persiste el documento de este cuaderno (autosave). */
     fun storeFor(id: String): DocumentStore = NotebookDocumentStore(id)
 
+    /** [ChatStore] que persiste la conversación de IA de este cuaderno (Fase 16). */
+    fun chatStoreFor(id: String): ChatStore = NotebookChatStore(id)
+
     private fun documentFile(id: String) = File(dir, "${safeId(id)}$DOC_EXT")
     private fun metaFile(id: String) = File(dir, "${safeId(id)}$META_EXT")
     private fun tempFile(id: String) = File(dir, "${safeId(id)}$DOC_EXT.tmp")
+    private fun chatFile(id: String) = File(dir, "${safeId(id)}$CHAT_EXT")
+    private fun chatTempFile(id: String) = File(dir, "${safeId(id)}$CHAT_EXT.tmp")
 
     private fun writeMeta(notebook: Notebook) {
         dir.mkdirs()
@@ -168,6 +178,33 @@ class NotebookLibrary(context: Context) {
         }
     }
 
+    /**
+     * Historial de chat de un cuaderno en `<id>.chat`, con la misma escritura
+     * atómica que el documento. Un fichero corrupto o ausente devuelve una
+     * conversación vacía; nunca lanza.
+     */
+    private inner class NotebookChatStore(private val id: String) : ChatStore {
+
+        override fun load(): ChatHistory {
+            val text = chatFile(id).takeIf { it.isFile }?.runCatching { readText() }?.getOrNull()
+            return ChatHistoryCodec.decode(text)
+        }
+
+        override fun persist(history: ChatHistory) {
+            runCatching {
+                dir.mkdirs()
+                val tmp = chatTempFile(id)
+                tmp.writeText(ChatHistoryCodec.encode(history))
+                Files.move(
+                    tmp.toPath(),
+                    chatFile(id).toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE,
+                )
+            }
+        }
+    }
+
     companion object {
         const val UNTITLED = "Cuaderno sin título"
 
@@ -180,6 +217,7 @@ class NotebookLibrary(context: Context) {
         private const val DIR_NAME = "notebooks"
         private const val DOC_EXT = ".json"
         private const val META_EXT = ".meta"
+        private const val CHAT_EXT = ".chat"
         private const val KEY_TITLE = "title"
         private const val KEY_CANVAS = "canvas"
 

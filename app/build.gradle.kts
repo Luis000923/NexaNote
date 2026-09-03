@@ -66,6 +66,9 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    // `org.json` real (el de Android es un stub que lanza en tests de JVM): permite
+    // cubrir el parseo defensivo de los comandos de IA y el códec del historial.
+    testImplementation(libs.json)
 
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.kotlinx.coroutines.test)
