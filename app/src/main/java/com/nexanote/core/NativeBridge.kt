@@ -9,6 +9,12 @@ package com.nexanote.core
  *    métodos `external`.
  *  - La superficie se mantiene mínima, explícita y versionable.
  *  - El resto del código depende de [NativeCore], no de este objeto directamente.
+ *
+ * ## Modelo de documento (Fase 2)
+ *
+ * El modelo vive en Rust. Las operaciones son *stateless*: el documento viaja
+ * como JSON en cada llamada y la función devuelve el documento actualizado (o
+ * lanza [IllegalStateException] si la operación falla, sin propagar `panic`).
  */
 object NativeBridge : NativeCore {
 
@@ -19,18 +25,77 @@ object NativeBridge : NativeCore {
         isLoaded = runCatching { System.loadLibrary("nexanote_core") }.isSuccess
     }
 
-    /**
-     * Función de prueba del puente: devuelve un saludo generado por el núcleo Rust
-     * a partir de [name]. Sirve para validar que el FFI está operativo.
-     */
     external override fun greeting(name: String): String
 
-    /** Versión del núcleo Rust (cadena semver), útil para diagnóstico. */
     external override fun coreVersion(): String
+
+    external override fun documentCreate(title: String): String
+
+    external override fun documentAddPage(documentJson: String, pageSpecJson: String): String
+
+    external override fun documentRemovePage(documentJson: String, pageId: String): String
+
+    external override fun documentAddElement(
+        documentJson: String,
+        pageId: String,
+        elementJson: String,
+    ): String
+
+    external override fun documentRemoveElement(
+        documentJson: String,
+        pageId: String,
+        elementId: String,
+    ): String
+
+    external override fun documentTranslatePageElements(
+        documentJson: String,
+        pageId: String,
+        dx: Float,
+        dy: Float,
+    ): String
+
+    external override fun documentSummary(documentJson: String): String
 }
 
 /** Contrato del núcleo. La UI depende de esta interfaz, no de la implementación JNI. */
 interface NativeCore {
     fun greeting(name: String): String
     fun coreVersion(): String
+
+    /** Crea un documento vacío; devuelve su JSON. */
+    fun documentCreate(title: String): String
+
+    /**
+     * Añade una página. [pageSpecJson] admite `{}` (A4 en blanco) o, por ejemplo,
+     * `{"size":{"format":"A5"},"template":{"kind":"Grid","spacing":24.0}}`.
+     * Devuelve el documento actualizado.
+     */
+    fun documentAddPage(documentJson: String, pageSpecJson: String): String
+
+    /** Elimina la página [pageId]. Devuelve el documento actualizado. */
+    fun documentRemovePage(documentJson: String, pageId: String): String
+
+    /**
+     * Inserta un elemento en la página [pageId]. [elementJson] es un `ElementKind`
+     * etiquetado, p. ej. `{"type":"Text","content":"hola", ...}`.
+     * Devuelve el documento actualizado.
+     */
+    fun documentAddElement(documentJson: String, pageId: String, elementJson: String): String
+
+    /** Elimina el elemento [elementId] de la página [pageId]. */
+    fun documentRemoveElement(documentJson: String, pageId: String, elementId: String): String
+
+    /** Traslada todos los elementos de la página [pageId] por `(dx, dy)`. */
+    fun documentTranslatePageElements(
+        documentJson: String,
+        pageId: String,
+        dx: Float,
+        dy: Float,
+    ): String
+
+    /**
+     * Resumen compacto del documento:
+     * `{"id","title","schema_version","page_count","element_count"}`.
+     */
+    fun documentSummary(documentJson: String): String
 }

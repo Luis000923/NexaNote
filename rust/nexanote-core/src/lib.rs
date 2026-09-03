@@ -11,6 +11,7 @@
 #![deny(warnings)]
 
 pub mod bridge;
+pub mod document;
 
 /// Versión pública del núcleo. La UI la muestra para diagnóstico.
 pub const CORE_VERSION: &str = env!("CARGO_PKG_VERSION");

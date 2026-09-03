@@ -13,3 +13,7 @@ crate-type = ["rlib", "cdylib"]
 [dependencies]
 # Estándar de facto para el adaptador JNI. Acotado al módulo `bridge`.
 jni = { version = "0.21", default-features = false }
+# Serialización del modelo de documento: persistencia futura y marshalling por la
+# frontera FFI (JSON). Ambas son crates ligeras y estándar del ecosistema.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
