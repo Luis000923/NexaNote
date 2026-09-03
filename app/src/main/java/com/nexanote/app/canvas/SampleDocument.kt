@@ -97,6 +97,17 @@ object SampleDocument {
         return LoadedDocument(doc, pageId)
     }
 
+    /**
+     * Construye un documento **vacío** con una sola página según `pageSpecJson`
+     * (ver `CanvasKind.pageSpecJson`). Es el punto de partida de un cuaderno nuevo
+     * creado desde la pantalla de inicio: sin contenido de ejemplo.
+     */
+    fun buildBlank(core: NativeCore, title: String, pageSpecJson: String): LoadedDocument {
+        var doc = core.documentCreate(title)
+        doc = core.documentAddPage(doc, pageSpecJson)
+        return LoadedDocument(doc, firstPageId(doc))
+    }
+
     /** Id de la primera página de un documento serializado. */
     fun firstPageId(documentJson: String): String =
         JSONObject(documentJson).getJSONArray("pages").getJSONObject(0).getString("id")

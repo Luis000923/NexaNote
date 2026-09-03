@@ -34,10 +34,15 @@ interface DocumentStore {
 }
 
 /**
- * [DocumentStore] respaldado por un fichero en el almacenamiento privado de la
- * app. La escritura es atómica (fichero temporal + `move` con `ATOMIC_MOVE`),
- * de modo que un cierre inesperado a mitad de guardado nunca deja el fichero
- * corrupto: o está el estado nuevo completo, o el anterior.
+ * [DocumentStore] del **documento activo único**, anterior a la biblioteca de
+ * cuadernos: un solo fichero en el almacenamiento privado de la app. La escritura
+ * es atómica (fichero temporal + `move` con `ATOMIC_MOVE`), de modo que un cierre
+ * inesperado a mitad de guardado nunca deja el fichero corrupto.
+ *
+ * Sigue existiendo para **recuperar la sesión guardada por versiones previas**:
+ * [NotebookLibrary.importLegacyAutosave] la convierte en un cuaderno la primera
+ * vez que se abre el explorador. Los cuadernos nuevos usan el almacén por
+ * cuaderno de [NotebookLibrary].
  */
 class FileDocumentStore(context: Context) : DocumentStore {
 

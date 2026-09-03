@@ -276,6 +276,112 @@ pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentTranslatePage
     )
 }
 
+// ---------------------------------------------------------------------------
+// Selección de área, manipulación en lote y color/relleno (Fase 13).
+// ---------------------------------------------------------------------------
+
+/// `external fun documentSelectInArea(documentJson: String, pageId: String, areaJson: String): String`
+///
+/// Devuelve `{"ids":[...],"bounds":{...}|null}` con los elementos contenidos por
+/// completo en el área. La UI no decide qué cae dentro: sólo entrega el marco.
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentSelectInArea<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    document_json: JString<'local>,
+    page_id: JString<'local>,
+    area_json: JString<'local>,
+) -> jstring {
+    let doc = read_string(&mut env, &document_json);
+    let page_id = read_string(&mut env, &page_id);
+    let area = read_string(&mut env, &area_json);
+    run_api(&mut env, api::select_in_area(&doc, &page_id, &area))
+}
+
+/// `external fun documentSelectAt(documentJson: String, pageId: String, x: Float, y: Float): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentSelectAt<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    document_json: JString<'local>,
+    page_id: JString<'local>,
+    x: jni::sys::jfloat,
+    y: jni::sys::jfloat,
+) -> jstring {
+    let doc = read_string(&mut env, &document_json);
+    let page_id = read_string(&mut env, &page_id);
+    run_api(&mut env, api::select_at(&doc, &page_id, x, y))
+}
+
+/// `external fun documentRemoveElements(documentJson: String, pageId: String, idsJson: String): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentRemoveElements<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    document_json: JString<'local>,
+    page_id: JString<'local>,
+    ids_json: JString<'local>,
+) -> jstring {
+    let doc = read_string(&mut env, &document_json);
+    let page_id = read_string(&mut env, &page_id);
+    let ids = read_string(&mut env, &ids_json);
+    run_api(&mut env, api::remove_elements(&doc, &page_id, &ids))
+}
+
+/// `external fun documentTranslateElements(documentJson: String, pageId: String, idsJson: String, dx: Float, dy: Float): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentTranslateElements<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    document_json: JString<'local>,
+    page_id: JString<'local>,
+    ids_json: JString<'local>,
+    dx: jni::sys::jfloat,
+    dy: jni::sys::jfloat,
+) -> jstring {
+    let doc = read_string(&mut env, &document_json);
+    let page_id = read_string(&mut env, &page_id);
+    let ids = read_string(&mut env, &ids_json);
+    run_api(&mut env, api::translate_elements(&doc, &page_id, &ids, dx, dy))
+}
+
+/// `external fun documentDuplicateElements(documentJson: String, pageId: String, idsJson: String, dx: Float, dy: Float): String`
+///
+/// Devuelve `{"document":"<json>","selection":{...}}`: el documento con las copias
+/// y la selección ya movida a ellas.
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentDuplicateElements<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    document_json: JString<'local>,
+    page_id: JString<'local>,
+    ids_json: JString<'local>,
+    dx: jni::sys::jfloat,
+    dy: jni::sys::jfloat,
+) -> jstring {
+    let doc = read_string(&mut env, &document_json);
+    let page_id = read_string(&mut env, &page_id);
+    let ids = read_string(&mut env, &ids_json);
+    run_api(&mut env, api::duplicate_elements(&doc, &page_id, &ids, dx, dy))
+}
+
+/// `external fun documentSetElementsColor(documentJson: String, pageId: String, idsJson: String, colorJson: String): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentSetElementsColor<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    document_json: JString<'local>,
+    page_id: JString<'local>,
+    ids_json: JString<'local>,
+    color_json: JString<'local>,
+) -> jstring {
+    let doc = read_string(&mut env, &document_json);
+    let page_id = read_string(&mut env, &page_id);
+    let ids = read_string(&mut env, &ids_json);
+    let color = read_string(&mut env, &color_json);
+    run_api(&mut env, api::set_elements_color(&doc, &page_id, &ids, &color))
+}
+
 /// `external fun documentRenderPage(documentJson: String, pageIndex: Int): String`
 ///
 /// Devuelve la **escena plana** (JSON `ScenePage`) de la página indicada, lista

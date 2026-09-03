@@ -143,6 +143,23 @@ pub enum ScenePrimitive {
     },
 }
 
+/// Caja de impacto de un elemento: lo que la UI necesita para resolver un toque
+/// o una selección por área **sin conocer el modelo**. Va en el mismo orden que
+/// `primitives`, de atrás hacia delante.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SceneHit {
+    /// Id del elemento (hex), tal y como lo esperan las operaciones de la `api`.
+    pub id: String,
+    /// Nombre estable del tipo (`Stroke`, `Text`, ...), para rotular la acción.
+    pub kind: String,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    /// `true` si el elemento admite relleno (formas cerradas).
+    pub fillable: bool,
+}
+
 /// Escena completa de una página.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ScenePage {
@@ -152,8 +169,13 @@ pub struct ScenePage {
     pub height_px: f32,
     pub background: Color,
     pub template: SceneTemplate,
+    /// `true` si la página es un **lienzo infinito**: la UI no dibuja hoja ni
+    /// borde, y `width_px`/`height_px` son sólo la extensión ocupada.
+    pub infinite: bool,
     /// Primitivas ya ordenadas de atrás hacia delante (`z_index` ascendente).
     pub primitives: Vec<ScenePrimitive>,
+    /// Cajas de impacto, en el mismo orden que `primitives`.
+    pub hits: Vec<SceneHit>,
 }
 
 fn template_to_scene(t: PageTemplate) -> SceneTemplate {
@@ -250,6 +272,23 @@ fn element_to_primitive(el: &Element) -> ScenePrimitive {
                 },
             }
         }
+    }
+}
+
+/// Margen libre (px) que el lienzo infinito deja más allá de su contenido.
+const INFINITE_MARGIN_PX: f32 = 600.0;
+
+/// Caja de impacto de un elemento, calculada por el modelo ([`Element::bounds`]).
+fn element_to_hit(el: &Element) -> SceneHit {
+    let b = el.bounds();
+    SceneHit {
+        id: el.id.to_string(),
+        kind: el.kind_name().to_string(),
+        x: b.x,
+        y: b.y,
+        width: b.width,
+        height: b.height,
+        fillable: matches!(&el.kind, ElementKind::Shape(sh) if sh.kind.is_closed()),
     }
 }
 
@@ -390,24 +429,32 @@ pub fn build_scene(document_json: &str, page_index: usize) -> DocResult<ScenePag
         })?;
 
     let (w_mm, h_mm) = page.size.dimensions_mm();
+    let (mut width_px, mut height_px) = (w_mm * PX_PER_MM, h_mm * PX_PER_MM);
+
+    // Un lienzo infinito no tiene hoja: su extensión crece con el contenido, con
+    // un margen para que siempre quede sitio libre por delante del trazo.
+    if page.size.is_infinite() {
+        if let Some(content) = page.content_bounds() {
+            width_px = width_px.max(content.right() + INFINITE_MARGIN_PX);
+            height_px = height_px.max(content.bottom() + INFINITE_MARGIN_PX);
+        }
+    }
 
     let mut ordered: Vec<&Element> = page.elements.iter().collect();
     ordered.sort_by_key(|e| e.z_index);
     let primitives = ordered.iter().map(|e| element_to_primitive(e)).collect();
+    let hits = ordered.iter().map(|e| element_to_hit(e)).collect();
 
     Ok(ScenePage {
         page_index,
         page_id: page.id.to_string(),
-        width_px: w_mm * PX_PER_MM,
-        height_px: h_mm * PX_PER_MM,
-        background: Color {
-            r: 255,
-            g: 255,
-            b: 255,
-            a: 255,
-        },
+        width_px,
+        height_px,
+        background: page.background(),
         template: template_to_scene(page.template),
+        infinite: page.size.is_infinite(),
         primitives,
+        hits,
     })
 }
 

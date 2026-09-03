@@ -1,6 +1,7 @@
 package com.nexanote.app.canvas
 
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 
 /**
@@ -17,8 +18,30 @@ data class ScenePage(
     val heightPx: Float,
     val background: Color,
     val template: SceneTemplate,
+    /**
+     * `true` si la página es un **lienzo infinito**: no hay hoja delimitada, y
+     * `widthPx`/`heightPx` describen sólo la extensión ocupada hasta ahora.
+     */
+    val infinite: Boolean = false,
     /** Primitivas ordenadas de atrás hacia delante. */
     val primitives: List<ScenePrimitive>,
+    /** Cajas de impacto de los elementos, en el mismo orden que [primitives]. */
+    val hits: List<SceneHit> = emptyList(),
+)
+
+/**
+ * Caja de impacto de un elemento: lo que hace falta para resaltar la selección
+ * sin volver a preguntar al núcleo. El núcleo sigue siendo quien **decide** qué
+ * está seleccionado ([com.nexanote.core.NativeCore.documentSelectInArea]); esto
+ * sólo permite pintarlo.
+ */
+data class SceneHit(
+    val id: String,
+    /** Nombre del tipo del núcleo (`Stroke`, `Text`, `Shape`, ...). */
+    val kind: String,
+    val bounds: Rect,
+    /** `true` si el elemento admite relleno (formas cerradas). */
+    val fillable: Boolean,
 )
 
 sealed interface SceneTemplate {

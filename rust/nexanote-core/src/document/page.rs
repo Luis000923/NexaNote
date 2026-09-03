@@ -4,10 +4,12 @@ use serde::{Deserialize, Serialize};
 
 use super::element::{Element, ElementKind};
 use super::error::{DocResult, DocumentError};
+use super::geometry::{Color, Rect};
 use super::id::{ElementId, PageId};
 
 /// Tamaño de página. Las dimensiones se expresan en milímetros para los formatos
-/// estándar; `Custom` permite cualquier lienzo.
+/// estándar; `Custom` permite cualquier lienzo y `Infinite` describe un **lienzo
+/// sin límites**, que crece con su contenido.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "format", content = "size")]
 pub enum PageSize {
@@ -15,7 +17,16 @@ pub enum PageSize {
     A5,
     Letter,
     Custom { width_mm: f32, height_mm: f32 },
+    /// Lienzo infinito: no hay hoja delimitada. Las dimensiones que reporta son
+    /// sólo la **extensión mínima** inicial; el render la amplía para cubrir todo
+    /// el contenido (ver `Page::content_bounds`).
+    Infinite,
 }
+
+/// Extensión mínima (mm) de un lienzo infinito recién creado.
+pub const INFINITE_MIN_WIDTH_MM: f32 = 420.0;
+/// Altura mínima (mm) de un lienzo infinito recién creado.
+pub const INFINITE_MIN_HEIGHT_MM: f32 = 420.0;
 
 impl Default for PageSize {
     fn default() -> Self {
@@ -31,7 +42,13 @@ impl PageSize {
             PageSize::A5 => (148.0, 210.0),
             PageSize::Letter => (215.9, 279.4),
             PageSize::Custom { width_mm, height_mm } => (width_mm, height_mm),
+            PageSize::Infinite => (INFINITE_MIN_WIDTH_MM, INFINITE_MIN_HEIGHT_MM),
         }
+    }
+
+    /// `true` si el lienzo no está delimitado por una hoja.
+    pub fn is_infinite(self) -> bool {
+        matches!(self, PageSize::Infinite)
     }
 
     fn validate(self) -> DocResult<()> {
@@ -116,6 +133,69 @@ impl Page {
     /// Número de elementos en la página.
     pub fn element_count(&self) -> usize {
         self.elements.len()
+    }
+
+    /// Caja que envuelve **todo** el contenido de la página, o `None` si está
+    /// vacía. Es la base del crecimiento del lienzo infinito y del encuadre de
+    /// una selección.
+    pub fn content_bounds(&self) -> Option<Rect> {
+        let mut iter = self.elements.iter();
+        let mut acc = iter.next()?.bounds();
+        for element in iter {
+            acc = acc.union(element.bounds());
+        }
+        Some(acc)
+    }
+
+    /// Ids de los elementos **contenidos por completo** en `area`, en orden de
+    /// pintado (`z_index` ascendente).
+    pub fn elements_in(&self, area: Rect) -> Vec<ElementId> {
+        let mut hits: Vec<&Element> = self
+            .elements
+            .iter()
+            .filter(|e| area.contains_rect(e.bounds()))
+            .collect();
+        hits.sort_by_key(|e| e.z_index);
+        hits.iter().map(|e| e.id).collect()
+    }
+
+    /// Elemento **más al frente** cuya caja contiene el punto `(x, y)`, con un
+    /// margen de tolerancia para que tocar un trazo fino sea viable con el dedo.
+    pub fn element_at(&self, x: f32, y: f32, tolerance: f32) -> Option<ElementId> {
+        let point = super::geometry::Point::new(x, y);
+        self.elements
+            .iter()
+            .filter(|e| e.bounds().inflated(tolerance.max(0.0)).contains_point(point))
+            .max_by_key(|e| e.z_index)
+            .map(|e| e.id)
+    }
+
+    /// Duplica los elementos indicados desplazados `(dx, dy)`, los coloca encima
+    /// del resto y devuelve los ids de las copias, en el mismo orden.
+    pub fn duplicate_elements(&mut self, ids: &[ElementId], dx: f32, dy: f32) -> Vec<ElementId> {
+        use super::geometry::Transformable;
+        let mut copies: Vec<Element> = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(source) = self.element(*id) {
+                let mut clone = Element::new(source.kind.clone(), 0);
+                clone.translate(dx, dy);
+                copies.push(clone);
+            }
+        }
+        let mut next_z = self.elements.iter().map(|e| e.z_index).max().unwrap_or(-1) + 1;
+        let mut created = Vec::with_capacity(copies.len());
+        for mut copy in copies {
+            copy.z_index = next_z;
+            next_z += 1;
+            created.push(copy.id);
+            self.elements.push(copy);
+        }
+        created
+    }
+
+    /// Color de fondo con el que se pinta la página.
+    pub fn background(&self) -> Color {
+        Color::rgb(255, 255, 255)
     }
 }
 

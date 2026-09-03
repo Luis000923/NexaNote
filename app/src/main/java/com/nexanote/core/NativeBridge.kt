@@ -90,6 +90,48 @@ object NativeBridge : NativeCore {
         dy: Float,
     ): String
 
+    external override fun documentSelectInArea(
+        documentJson: String,
+        pageId: String,
+        areaJson: String,
+    ): String
+
+    external override fun documentSelectAt(
+        documentJson: String,
+        pageId: String,
+        x: Float,
+        y: Float,
+    ): String
+
+    external override fun documentRemoveElements(
+        documentJson: String,
+        pageId: String,
+        idsJson: String,
+    ): String
+
+    external override fun documentTranslateElements(
+        documentJson: String,
+        pageId: String,
+        idsJson: String,
+        dx: Float,
+        dy: Float,
+    ): String
+
+    external override fun documentDuplicateElements(
+        documentJson: String,
+        pageId: String,
+        idsJson: String,
+        dx: Float,
+        dy: Float,
+    ): String
+
+    external override fun documentSetElementsColor(
+        documentJson: String,
+        pageId: String,
+        idsJson: String,
+        colorJson: String,
+    ): String
+
     external override fun documentSummary(documentJson: String): String
 
     external override fun documentRenderPage(documentJson: String, pageIndex: Int): String
@@ -201,6 +243,64 @@ interface NativeCore {
         pageId: String,
         dx: Float,
         dy: Float,
+    ): String
+
+    // -- Selección de área, edición en lote y color (Fase 13) ---------------
+    // La UI entrega geometría en coordenadas de página; el núcleo decide qué
+    // elementos caen dentro y devuelve ids ya resueltos. Ninguna de estas
+    // operaciones duplica lógica de dominio en Kotlin.
+
+    /**
+     * Selecciona los elementos **contenidos por completo** en el área
+     * `{"x","y","width","height"}` (px de página; el arrastre puede venir en
+     * cualquier dirección). Devuelve `{"ids":[...],"bounds":{...}|null}`.
+     */
+    fun documentSelectInArea(documentJson: String, pageId: String, areaJson: String): String
+
+    /**
+     * Selecciona el elemento **más al frente** bajo el punto `(x, y)`, con la
+     * tolerancia de toque que aplica el núcleo. Misma forma de salida que
+     * [documentSelectInArea]; `ids` vacío si no se tocó nada.
+     */
+    fun documentSelectAt(documentJson: String, pageId: String, x: Float, y: Float): String
+
+    /** Elimina en bloque los elementos `["<id>", ...]`. Los ids desconocidos se ignoran. */
+    fun documentRemoveElements(documentJson: String, pageId: String, idsJson: String): String
+
+    /** Traslada `(dx, dy)` sólo los elementos indicados. */
+    fun documentTranslateElements(
+        documentJson: String,
+        pageId: String,
+        idsJson: String,
+        dx: Float,
+        dy: Float,
+    ): String
+
+    /**
+     * Duplica los elementos indicados desplazados `(dx, dy)`. Devuelve
+     * `{"document":"<json>","selection":{"ids":[...],"bounds":...}}`, con la
+     * selección ya apuntando a las copias.
+     */
+    fun documentDuplicateElements(
+        documentJson: String,
+        pageId: String,
+        idsJson: String,
+        dx: Float,
+        dy: Float,
+    ): String
+
+    /**
+     * Aplica color a los elementos indicados. [colorJson] es
+     * `{"target":"stroke","color":{"r","g","b","a"}}` para la tinta (trazo, texto
+     * y contorno) o `{"target":"fill","color":{...}|null}` para el relleno de las
+     * formas cerradas. Los elementos que no admiten esa propiedad se dejan
+     * intactos, sin error.
+     */
+    fun documentSetElementsColor(
+        documentJson: String,
+        pageId: String,
+        idsJson: String,
+        colorJson: String,
     ): String
 
     /**

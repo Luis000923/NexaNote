@@ -11,7 +11,8 @@ use super::element::{
     ElementKind, Formula, Graph, ImageRef, Shape, ShapeKind, Stroke, TextBox,
 };
 use super::error::{DocResult, DocumentError};
-use super::geometry::Point;
+use super::geometry::{Color, Point, Rect, Transformable};
+use super::id::ElementId;
 use super::math;
 use super::model::Document;
 use super::page::{PageSize, PageTemplate};
@@ -559,12 +560,242 @@ pub fn translate_page_elements(
     dx: f32,
     dy: f32,
 ) -> DocResult<String> {
-    use super::geometry::Transformable;
     let mut doc = Document::from_json(document_json)?;
     let pid = page_id.parse()?;
     let page = doc.page_mut(pid)?;
     for element in &mut page.elements {
         element.translate(dx, dy);
+    }
+    doc.to_json()
+}
+
+
+// ---------------------------------------------------------------------------
+// Selección de área, manipulación en lote y color/relleno (Fase 13).
+//
+// Todas estas operaciones deciden en el núcleo: la UI sólo entrega un rectángulo
+// o un punto en coordenadas de página y recibe ids ya resueltos.
+// ---------------------------------------------------------------------------
+
+/// Tolerancia (px de página) al resolver el elemento tocado: un trazo fino debe
+/// poder seleccionarse con el dedo, no sólo con la punta del stylus.
+const TAP_TOLERANCE_PX: f32 = 8.0;
+
+/// Rectángulo de selección tal y como lo envía la UI.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AreaSpec {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+impl AreaSpec {
+    fn to_rect(self) -> DocResult<Rect> {
+        let rect = Rect::new(self.x, self.y, self.width, self.height);
+        if [rect.x, rect.y, rect.width, rect.height].iter().all(|v| v.is_finite()) {
+            Ok(rect.normalized())
+        } else {
+            Err(DocumentError::InvalidArgument(
+                "el área de selección debe ser finita".to_string(),
+            ))
+        }
+    }
+}
+
+/// Resultado de una selección: ids elegidos y su caja envolvente (si hay alguno).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Selection {
+    pub ids: Vec<String>,
+    pub bounds: Option<AreaOut>,
+}
+
+/// Rectángulo serializable devuelto a la UI.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct AreaOut {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl From<Rect> for AreaOut {
+    fn from(r: Rect) -> Self {
+        let r = r.normalized();
+        AreaOut { x: r.x, y: r.y, width: r.width, height: r.height }
+    }
+}
+
+fn parse_ids(ids_json: &str) -> DocResult<Vec<ElementId>> {
+    let raw: Vec<String> = parse(ids_json, "lista de ids")?;
+    raw.iter().map(|s| s.parse()).collect()
+}
+
+/// Caja envolvente de los elementos `ids` de la página, o `None` si ninguno existe.
+fn bounds_of(page: &super::page::Page, ids: &[ElementId]) -> Option<Rect> {
+    let mut acc: Option<Rect> = None;
+    for id in ids {
+        if let Some(element) = page.element(*id) {
+            acc = Some(match acc {
+                Some(r) => r.union(element.bounds()),
+                None => element.bounds(),
+            });
+        }
+    }
+    acc
+}
+
+fn selection_of(page: &super::page::Page, ids: Vec<ElementId>) -> Selection {
+    let bounds = bounds_of(page, &ids).map(AreaOut::from);
+    Selection {
+        ids: ids.iter().map(|id| id.to_string()).collect(),
+        bounds,
+    }
+}
+
+/// Selecciona los elementos **contenidos por completo** en el área dada.
+/// `area_json` es `{"x":..,"y":..,"width":..,"height":..}` en px de página.
+/// Devuelve `{"ids":[...],"bounds":{...}|null}`.
+pub fn select_in_area(document_json: &str, page_id: &str, area_json: &str) -> DocResult<String> {
+    let doc = Document::from_json(document_json)?;
+    let pid = page_id.parse()?;
+    let page = doc.page(pid).ok_or(DocumentError::PageNotFound(page_id.to_string()))?;
+    let area: AreaSpec = parse(area_json, "área de selección")?;
+    let ids = page.elements_in(area.to_rect()?);
+    dump(&selection_of(page, ids))
+}
+
+/// Selecciona el elemento más al frente bajo el punto `(x, y)`. Devuelve la misma
+/// forma que [`select_in_area`], con la lista vacía si no se tocó nada.
+pub fn select_at(document_json: &str, page_id: &str, x: f32, y: f32) -> DocResult<String> {
+    let doc = Document::from_json(document_json)?;
+    let pid = page_id.parse()?;
+    let page = doc.page(pid).ok_or(DocumentError::PageNotFound(page_id.to_string()))?;
+    let ids = page.element_at(x, y, TAP_TOLERANCE_PX).into_iter().collect();
+    dump(&selection_of(page, ids))
+}
+
+/// Elimina en bloque los elementos `ids_json` (`["<hex>", ...]`) de la página.
+/// Los ids que ya no existan se ignoran: borrar dos veces no es un error.
+pub fn remove_elements(document_json: &str, page_id: &str, ids_json: &str) -> DocResult<String> {
+    let mut doc = Document::from_json(document_json)?;
+    let pid = page_id.parse()?;
+    let ids = parse_ids(ids_json)?;
+    let page = doc.page_mut(pid)?;
+    page.elements.retain(|e| !ids.contains(&e.id));
+    doc.to_json()
+}
+
+/// Traslada `(dx, dy)` los elementos indicados, dejando el resto intacto.
+pub fn translate_elements(
+    document_json: &str,
+    page_id: &str,
+    ids_json: &str,
+    dx: f32,
+    dy: f32,
+) -> DocResult<String> {
+    if !dx.is_finite() || !dy.is_finite() {
+        return Err(DocumentError::InvalidArgument(
+            "el desplazamiento debe ser finito".to_string(),
+        ));
+    }
+    let mut doc = Document::from_json(document_json)?;
+    let pid = page_id.parse()?;
+    let ids = parse_ids(ids_json)?;
+    let page = doc.page_mut(pid)?;
+    for element in page.elements.iter_mut().filter(|e| ids.contains(&e.id)) {
+        element.translate(dx, dy);
+    }
+    doc.to_json()
+}
+
+/// Duplica los elementos indicados desplazados `(dx, dy)`. Devuelve
+/// `{"document":"<json>","selection":{"ids":[...],"bounds":...}}` para que la UI
+/// pase a tener seleccionadas las copias.
+pub fn duplicate_elements(
+    document_json: &str,
+    page_id: &str,
+    ids_json: &str,
+    dx: f32,
+    dy: f32,
+) -> DocResult<String> {
+    if !dx.is_finite() || !dy.is_finite() {
+        return Err(DocumentError::InvalidArgument(
+            "el desplazamiento debe ser finito".to_string(),
+        ));
+    }
+    let mut doc = Document::from_json(document_json)?;
+    let pid = page_id.parse()?;
+    let ids = parse_ids(ids_json)?;
+    let page = doc.page_mut(pid)?;
+    let created = page.duplicate_elements(&ids, dx, dy);
+    let selection = selection_of(page, created);
+    dump(&DuplicateOut {
+        document: doc.to_json()?,
+        selection,
+    })
+}
+
+/// Salida de [`duplicate_elements`]: el documento (como cadena JSON anidada, igual
+/// que el resto de la superficie FFI) y la selección con las copias creadas.
+#[derive(Debug, Serialize)]
+struct DuplicateOut {
+    document: String,
+    selection: Selection,
+}
+
+/// Qué color de un elemento se está cambiando.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ColorTarget {
+    /// Tinta: trazo, texto y contorno de forma.
+    Stroke,
+    /// Relleno de las formas cerradas; `null` lo quita.
+    Fill,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ColorSpec {
+    target: ColorTarget,
+    /// `null` sólo es válido para `fill` (quitar el relleno).
+    color: Option<Color>,
+}
+
+/// Aplica un color de trazo o de relleno a los elementos indicados.
+///
+/// `color_json` es `{"target":"stroke","color":{"r":..,"g":..,"b":..,"a":..}}` o
+/// `{"target":"fill","color":null}` para quitar el relleno. Los elementos que no
+/// admiten esa propiedad se dejan intactos, sin error: cambiar el color de una
+/// selección mixta es una operación normal, no un fallo.
+pub fn set_elements_color(
+    document_json: &str,
+    page_id: &str,
+    ids_json: &str,
+    color_json: &str,
+) -> DocResult<String> {
+    let spec: ColorSpec = parse(color_json, "color")?;
+    if spec.target == ColorTarget::Stroke && spec.color.is_none() {
+        return Err(DocumentError::InvalidArgument(
+            "el color de trazo no puede ser nulo".to_string(),
+        ));
+    }
+    let mut doc = Document::from_json(document_json)?;
+    let pid = page_id.parse()?;
+    let ids = parse_ids(ids_json)?;
+    let page = doc.page_mut(pid)?;
+    for element in page.elements.iter_mut().filter(|e| ids.contains(&e.id)) {
+        match spec.target {
+            ColorTarget::Stroke => {
+                if let Some(color) = spec.color {
+                    element.set_stroke_color(color);
+                }
+            }
+            ColorTarget::Fill => {
+                element.set_fill_color(spec.color);
+            }
+        }
     }
     doc.to_json()
 }
@@ -584,6 +815,180 @@ pub fn summary(document_json: &str) -> DocResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Documento de un solo lienzo con un rectángulo y un trazo alejado,
+    /// para las pruebas de selección/borrado/color.
+    fn doc_with_two_elements() -> (String, String, Vec<String>) {
+        let doc = create_document("selección").unwrap();
+        let doc = add_page(&doc, r#"{}"#).unwrap();
+        let page_id = Document::from_json(&doc).unwrap().pages[0].id.to_string();
+        let doc = add_shape(
+            &doc,
+            &page_id,
+            r#"{"kind":"Rectangle","bounds":{"x":10.0,"y":10.0,"width":40.0,"height":40.0},
+                "stroke_color":{"r":0,"g":0,"b":0,"a":255},"fill_color":null,"stroke_width":2.0}"#,
+        )
+        .unwrap();
+        let doc = add_stroke(
+            &doc,
+            &page_id,
+            r#"{"points":[{"position":{"x":300.0,"y":300.0},"pressure":0.5,"timestamp_ms":0},
+                {"position":{"x":320.0,"y":320.0},"pressure":0.5,"timestamp_ms":8}],
+                "color":{"r":0,"g":0,"b":0,"a":255},"width":2.0}"#,
+        )
+        .unwrap();
+        let ids = Document::from_json(&doc).unwrap().pages[0]
+            .elements
+            .iter()
+            .map(|e| e.id.to_string())
+            .collect();
+        (doc, page_id, ids)
+    }
+
+    #[test]
+    fn select_in_area_takes_only_fully_contained_elements() {
+        let (doc, page_id, ids) = doc_with_two_elements();
+        let sel: serde_json::Value = serde_json::from_str(
+            &select_in_area(&doc, &page_id, r#"{"x":0.0,"y":0.0,"width":100.0,"height":100.0}"#)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(sel["ids"].as_array().unwrap().len(), 1);
+        assert_eq!(sel["ids"][0], ids[0]);
+        // La caja devuelta envuelve al rectángulo (con medio grosor de trazo).
+        assert!(sel["bounds"]["width"].as_f64().unwrap() >= 40.0);
+    }
+
+    #[test]
+    fn select_in_area_normalizes_a_backwards_drag() {
+        let (doc, page_id, _) = doc_with_two_elements();
+        let sel: serde_json::Value = serde_json::from_str(
+            &select_in_area(&doc, &page_id, r#"{"x":100.0,"y":100.0,"width":-100.0,"height":-100.0}"#)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(sel["ids"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn select_at_picks_the_topmost_element_under_the_point() {
+        let (doc, page_id, ids) = doc_with_two_elements();
+        let hit: serde_json::Value =
+            serde_json::from_str(&select_at(&doc, &page_id, 30.0, 30.0).unwrap()).unwrap();
+        assert_eq!(hit["ids"][0], ids[0]);
+
+        let miss: serde_json::Value =
+            serde_json::from_str(&select_at(&doc, &page_id, 900.0, 900.0).unwrap()).unwrap();
+        assert!(miss["ids"].as_array().unwrap().is_empty());
+        assert!(miss["bounds"].is_null());
+    }
+
+    #[test]
+    fn remove_elements_drops_the_listed_ids_and_ignores_the_unknown() {
+        let (doc, page_id, ids) = doc_with_two_elements();
+        let updated = remove_elements(&doc, &page_id, &format!(r#"["{}"]"#, ids[0])).unwrap();
+        assert_eq!(Document::from_json(&updated).unwrap().element_count(), 1);
+        // Repetir el borrado no es un error.
+        let again = remove_elements(&updated, &page_id, &format!(r#"["{}"]"#, ids[0])).unwrap();
+        assert_eq!(Document::from_json(&again).unwrap().element_count(), 1);
+    }
+
+    #[test]
+    fn translate_elements_moves_only_the_selection() {
+        let (doc, page_id, ids) = doc_with_two_elements();
+        let moved =
+            translate_elements(&doc, &page_id, &format!(r#"["{}"]"#, ids[0]), 100.0, 0.0).unwrap();
+        let page = &Document::from_json(&moved).unwrap().pages[0];
+        match &page.element(ids[0].parse().unwrap()).unwrap().kind {
+            ElementKind::Shape(sh) => assert_eq!(sh.bounds.x, 110.0),
+            other => panic!("tipo inesperado: {other:?}"),
+        }
+        match &page.element(ids[1].parse().unwrap()).unwrap().kind {
+            ElementKind::Stroke(s) => assert_eq!(s.points[0].position.x, 300.0),
+            other => panic!("tipo inesperado: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn duplicate_elements_adds_copies_and_returns_them_selected() {
+        let (doc, page_id, ids) = doc_with_two_elements();
+        let out: serde_json::Value = serde_json::from_str(
+            &duplicate_elements(&doc, &page_id, &format!(r#"["{}"]"#, ids[0]), 20.0, 20.0).unwrap(),
+        )
+        .unwrap();
+        let updated = Document::from_json(out["document"].as_str().unwrap()).unwrap();
+        assert_eq!(updated.element_count(), 3);
+        let copies = out["selection"]["ids"].as_array().unwrap();
+        assert_eq!(copies.len(), 1);
+        assert_ne!(copies[0].as_str().unwrap(), ids[0]);
+    }
+
+    #[test]
+    fn set_elements_color_changes_stroke_and_fill_where_it_applies() {
+        let (doc, page_id, ids) = doc_with_two_elements();
+        let all = format!(r#"["{}","{}"]"#, ids[0], ids[1]);
+        let inked = set_elements_color(
+            &doc,
+            &page_id,
+            &all,
+            r#"{"target":"stroke","color":{"r":200,"g":0,"b":0,"a":255}}"#,
+        )
+        .unwrap();
+        let filled = set_elements_color(
+            &inked,
+            &page_id,
+            &all,
+            r#"{"target":"fill","color":{"r":0,"g":0,"b":200,"a":255}}"#,
+        )
+        .unwrap();
+        let page = &Document::from_json(&filled).unwrap().pages[0];
+        match &page.element(ids[0].parse().unwrap()).unwrap().kind {
+            ElementKind::Shape(sh) => {
+                assert_eq!(sh.stroke_color, super::Color::rgb(200, 0, 0));
+                // El relleno sólo se aplica a la forma cerrada.
+                assert_eq!(sh.fill_color, Some(super::Color::rgb(0, 0, 200)));
+            }
+            other => panic!("tipo inesperado: {other:?}"),
+        }
+        match &page.element(ids[1].parse().unwrap()).unwrap().kind {
+            ElementKind::Stroke(s) => assert_eq!(s.color, super::Color::rgb(200, 0, 0)),
+            other => panic!("tipo inesperado: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stroke_color_cannot_be_removed() {
+        let (doc, page_id, ids) = doc_with_two_elements();
+        let err = set_elements_color(
+            &doc,
+            &page_id,
+            &format!(r#"["{}"]"#, ids[0]),
+            r#"{"target":"stroke","color":null}"#,
+        )
+        .unwrap_err();
+        assert!(matches!(err, DocumentError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn infinite_page_is_accepted_and_reported_by_the_scene() {
+        let doc = create_document("lienzo").unwrap();
+        let doc = add_page(&doc, r#"{"size":{"format":"Infinite"}}"#).unwrap();
+        let page_id = Document::from_json(&doc).unwrap().pages[0].id.to_string();
+        let doc = add_stroke(
+            &doc,
+            &page_id,
+            r#"{"points":[{"position":{"x":5000.0,"y":40.0},"pressure":0.5,"timestamp_ms":0}],
+                "color":{"r":0,"g":0,"b":0,"a":255},"width":2.0}"#,
+        )
+        .unwrap();
+        let scene: serde_json::Value =
+            serde_json::from_str(&super::super::render::render_page(&doc, 0).unwrap()).unwrap();
+        assert_eq!(scene["infinite"], true);
+        // El lienzo creció para cubrir un trazo muy a la derecha.
+        assert!(scene["width_px"].as_f64().unwrap() > 5000.0);
+        assert_eq!(scene["hits"].as_array().unwrap().len(), 1);
+        assert_eq!(scene["hits"][0]["kind"], "Stroke");
+    }
 
     #[test]
     fn create_then_summarize() {

@@ -43,6 +43,77 @@ impl Rect {
     pub fn origin(self) -> Point {
         Point::new(self.x, self.y)
     }
+
+    /// Borde derecho (`x + width`) del rectángulo ya normalizado.
+    pub fn right(self) -> f32 {
+        self.normalized().x + self.normalized().width
+    }
+
+    /// Borde inferior (`y + height`) del rectángulo ya normalizado.
+    pub fn bottom(self) -> f32 {
+        self.normalized().y + self.normalized().height
+    }
+
+    /// Equivalente con `width`/`height` no negativos: `Line`/`Arrow` guardan el
+    /// vector con signo, y para las pruebas geométricas hace falta la caja.
+    pub fn normalized(self) -> Rect {
+        let (x, width) = if self.width < 0.0 {
+            (self.x + self.width, -self.width)
+        } else {
+            (self.x, self.width)
+        };
+        let (y, height) = if self.height < 0.0 {
+            (self.y + self.height, -self.height)
+        } else {
+            (self.y, self.height)
+        };
+        Rect { x, y, width, height }
+    }
+
+    /// Crece el rectángulo `margin` unidades en las cuatro direcciones.
+    pub fn inflated(self, margin: f32) -> Rect {
+        let r = self.normalized();
+        Rect {
+            x: r.x - margin,
+            y: r.y - margin,
+            width: r.width + margin * 2.0,
+            height: r.height + margin * 2.0,
+        }
+    }
+
+    /// Rectángulo mínimo que contiene a ambos (ambos normalizados).
+    pub fn union(self, other: Rect) -> Rect {
+        let a = self.normalized();
+        let b = other.normalized();
+        let x = a.x.min(b.x);
+        let y = a.y.min(b.y);
+        Rect {
+            x,
+            y,
+            width: a.right().max(b.right()) - x,
+            height: a.bottom().max(b.bottom()) - y,
+        }
+    }
+
+    /// `true` si el punto cae dentro (bordes incluidos).
+    pub fn contains_point(self, p: Point) -> bool {
+        let r = self.normalized();
+        p.x >= r.x && p.x <= r.right() && p.y >= r.y && p.y <= r.bottom()
+    }
+
+    /// `true` si `other` queda **completamente** dentro de `self`.
+    pub fn contains_rect(self, other: Rect) -> bool {
+        let a = self.normalized();
+        let b = other.normalized();
+        b.x >= a.x && b.y >= a.y && b.right() <= a.right() && b.bottom() <= a.bottom()
+    }
+
+    /// `true` si ambos rectángulos se solapan (contacto de bordes incluido).
+    pub fn intersects(self, other: Rect) -> bool {
+        let a = self.normalized();
+        let b = other.normalized();
+        a.x <= b.right() && b.x <= a.right() && a.y <= b.bottom() && b.y <= a.bottom()
+    }
 }
 
 /// Color RGBA de 8 bits por canal.
@@ -108,6 +179,32 @@ mod tests {
         assert_eq!(p, Point::new(15.0, 15.0));
         p.scale(2.0, Point::ORIGIN);
         assert_eq!(p, Point::new(30.0, 30.0));
+    }
+
+    #[test]
+    fn rect_normalizes_negative_extents() {
+        let r = Rect::new(10.0, 10.0, -4.0, -6.0).normalized();
+        assert_eq!(r, Rect::new(6.0, 4.0, 4.0, 6.0));
+    }
+
+    #[test]
+    fn rect_containment_and_intersection() {
+        let outer = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let inner = Rect::new(10.0, 10.0, 20.0, 20.0);
+        let overlapping = Rect::new(90.0, 90.0, 40.0, 40.0);
+        let away = Rect::new(200.0, 200.0, 10.0, 10.0);
+        assert!(outer.contains_rect(inner));
+        assert!(!outer.contains_rect(overlapping));
+        assert!(outer.intersects(overlapping));
+        assert!(!outer.intersects(away));
+        assert!(outer.contains_point(Point::new(50.0, 50.0)));
+        assert!(!outer.contains_point(Point::new(-1.0, 50.0)));
+    }
+
+    #[test]
+    fn rect_union_covers_both() {
+        let u = Rect::new(0.0, 0.0, 10.0, 10.0).union(Rect::new(20.0, 5.0, 10.0, 20.0));
+        assert_eq!(u, Rect::new(0.0, 0.0, 30.0, 25.0));
     }
 
     #[test]

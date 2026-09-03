@@ -489,4 +489,191 @@ object NexaIcons {
             close()
         }
     }
+
+    /** Herramienta de selección: marco de recorte punteado con tirador. */
+    val Select: ImageVector by lazy {
+        vector("nexa_select", PathFillType.EvenOdd) {
+            // Cuatro esquinas en escuadra: la marca clásica de "selección".
+            moveTo(3f, 3f); lineTo(9f, 3f); lineTo(9f, 5f); lineTo(5f, 5f); lineTo(5f, 9f)
+            lineTo(3f, 9f); close()
+            moveTo(15f, 3f); lineTo(21f, 3f); lineTo(21f, 9f); lineTo(19f, 9f); lineTo(19f, 5f)
+            lineTo(15f, 5f); close()
+            moveTo(3f, 15f); lineTo(5f, 15f); lineTo(5f, 19f); lineTo(9f, 19f); lineTo(9f, 21f)
+            lineTo(3f, 21f); close()
+            moveTo(19f, 15f); lineTo(21f, 15f); lineTo(21f, 21f); lineTo(15f, 21f); lineTo(15f, 19f)
+            lineTo(19f, 19f); close()
+            // Centro: rectángulo sólido que sugiere el contenido agrupado.
+            moveTo(8.5f, 8.5f); lineTo(15.5f, 8.5f); lineTo(15.5f, 15.5f); lineTo(8.5f, 15.5f)
+            close()
+        }
+    }
+
+    /** Eliminar: papelera con tapa. */
+    val Delete: ImageVector by lazy {
+        vector("nexa_delete") {
+            moveTo(9f, 3f)
+            lineTo(15f, 3f)
+            lineTo(16f, 5f)
+            lineTo(20f, 5f)
+            lineTo(20f, 7f)
+            lineTo(4f, 7f)
+            lineTo(4f, 5f)
+            lineTo(8f, 5f)
+            close()
+            moveTo(6f, 9f)
+            lineTo(18f, 9f)
+            lineTo(17f, 21f)
+            lineTo(7f, 21f)
+            close()
+        }
+    }
+
+    /** Duplicar: dos hojas superpuestas. */
+    val Duplicate: ImageVector by lazy {
+        vector("nexa_duplicate", PathFillType.EvenOdd) {
+            moveTo(4f, 2f); lineTo(15f, 2f); lineTo(15f, 16f); lineTo(4f, 16f); close()
+            moveTo(6f, 4f); lineTo(13f, 4f); lineTo(13f, 14f); lineTo(6f, 14f); close()
+            moveTo(9f, 18f); lineTo(20f, 18f); lineTo(20f, 6f); lineTo(18f, 6f); lineTo(18f, 16f)
+            lineTo(9f, 16f); close()
+            moveTo(9f, 18f); lineTo(9f, 22f); lineTo(20f, 22f); lineTo(20f, 18f); close()
+        }
+    }
+
+    /** Color de tinta: paleta de pintor. */
+    val Palette: ImageVector by lazy {
+        vector("nexa_palette", PathFillType.EvenOdd) {
+            moveTo(12f, 3f)
+            curveToRelative(-4.97f, 0f, -9f, 3.58f, -9f, 8f)
+            curveToRelative(0f, 4.42f, 4.03f, 8f, 9f, 8f)
+            curveToRelative(0.83f, 0f, 1.5f, -0.67f, 1.5f, -1.5f)
+            curveToRelative(0f, -0.39f, -0.15f, -0.74f, -0.39f, -1.01f)
+            curveToRelative(-0.23f, -0.26f, -0.38f, -0.61f, -0.38f, -0.99f)
+            curveToRelative(0f, -0.83f, 0.67f, -1.5f, 1.5f, -1.5f)
+            horizontalLineTo(16f)
+            curveToRelative(2.76f, 0f, 5f, -2.24f, 5f, -5f)
+            curveToRelative(0f, -3.31f, -4.03f, -6f, -9f, -6f)
+            close()
+            moveTo(6.5f, 11f)
+            arcToRelative(1.5f, 1.5f, 0f, isMoreThanHalf = true, isPositiveArc = true, 3f, 0f)
+            arcToRelative(1.5f, 1.5f, 0f, isMoreThanHalf = true, isPositiveArc = true, -3f, 0f)
+            close()
+            moveTo(9.5f, 7f)
+            arcToRelative(1.5f, 1.5f, 0f, isMoreThanHalf = true, isPositiveArc = true, 3f, 0f)
+            arcToRelative(1.5f, 1.5f, 0f, isMoreThanHalf = true, isPositiveArc = true, -3f, 0f)
+            close()
+            moveTo(14.5f, 7f)
+            arcToRelative(1.5f, 1.5f, 0f, isMoreThanHalf = true, isPositiveArc = true, 3f, 0f)
+            arcToRelative(1.5f, 1.5f, 0f, isMoreThanHalf = true, isPositiveArc = true, -3f, 0f)
+            close()
+        }
+    }
+
+    /** Relleno: cubo de pintura volcado con una gota. */
+    val Fill: ImageVector by lazy {
+        vector("nexa_fill") {
+            moveTo(4f, 13f)
+            lineTo(11f, 6f)
+            lineTo(18f, 13f)
+            lineTo(11f, 20f)
+            close()
+            moveTo(20f, 15f)
+            curveToRelative(1.2f, 1.6f, 2f, 2.8f, 2f, 3.6f)
+            curveToRelative(0f, 1.1f, -0.9f, 2f, -2f, 2f)
+            reflectiveCurveToRelative(-2f, -0.9f, -2f, -2f)
+            curveToRelative(0f, -0.8f, 0.8f, -2f, 2f, -3.6f)
+            close()
+        }
+    }
+
+    /** Crear: signo "más". */
+    val Add: ImageVector by lazy {
+        vector("nexa_add") {
+            moveTo(11f, 4f)
+            lineTo(13f, 4f)
+            lineTo(13f, 11f)
+            lineTo(20f, 11f)
+            lineTo(20f, 13f)
+            lineTo(13f, 13f)
+            lineTo(13f, 20f)
+            lineTo(11f, 20f)
+            lineTo(11f, 13f)
+            lineTo(4f, 13f)
+            lineTo(4f, 11f)
+            lineTo(11f, 11f)
+            close()
+        }
+    }
+
+    /** Volver: flecha hacia la izquierda. */
+    val Back: ImageVector by lazy {
+        vector("nexa_back") {
+            moveTo(11f, 4f)
+            lineTo(12.4f, 5.4f)
+            lineTo(6.8f, 11f)
+            lineTo(20f, 11f)
+            lineTo(20f, 13f)
+            lineTo(6.8f, 13f)
+            lineTo(12.4f, 18.6f)
+            lineTo(11f, 20f)
+            lineTo(3f, 12f)
+            close()
+        }
+    }
+
+    /** Cuaderno: hoja con lomo cosido. */
+    val Notebook: ImageVector by lazy {
+        vector("nexa_notebook", PathFillType.EvenOdd) {
+            moveTo(6f, 3f); lineTo(20f, 3f); lineTo(20f, 21f); lineTo(6f, 21f); close()
+            moveTo(8f, 5f); lineTo(18f, 5f); lineTo(18f, 19f); lineTo(8f, 19f); close()
+            moveTo(3f, 5f); lineTo(5f, 5f); lineTo(5f, 8f); lineTo(3f, 8f); close()
+            moveTo(3f, 10.5f); lineTo(5f, 10.5f); lineTo(5f, 13.5f); lineTo(3f, 13.5f); close()
+            moveTo(3f, 16f); lineTo(5f, 16f); lineTo(5f, 19f); lineTo(3f, 19f); close()
+        }
+    }
+
+    /** Formato A4: hoja vertical con una esquina doblada. */
+    val PageA4: ImageVector by lazy {
+        vector("nexa_page_a4", PathFillType.EvenOdd) {
+            moveTo(5f, 2f); lineTo(14f, 2f); lineTo(19f, 7f); lineTo(19f, 22f); lineTo(5f, 22f)
+            close()
+            moveTo(7f, 4f); lineTo(13f, 4f); lineTo(13f, 8f); lineTo(17f, 8f); lineTo(17f, 20f)
+            lineTo(7f, 20f); close()
+        }
+    }
+
+    /** Lienzo infinito: el lazo del símbolo de infinito. */
+    val InfiniteCanvas: ImageVector by lazy {
+        vector("nexa_infinite_canvas", PathFillType.EvenOdd) {
+            moveTo(6.5f, 7f)
+            curveToRelative(-2.49f, 0f, -4.5f, 2.24f, -4.5f, 5f)
+            reflectiveCurveToRelative(2.01f, 5f, 4.5f, 5f)
+            curveToRelative(1.5f, 0f, 2.6f, -0.8f, 3.4f, -1.8f)
+            lineTo(12f, 12.6f)
+            lineToRelative(2.1f, 2.6f)
+            curveToRelative(0.8f, 1f, 1.9f, 1.8f, 3.4f, 1.8f)
+            curveToRelative(2.49f, 0f, 4.5f, -2.24f, 4.5f, -5f)
+            reflectiveCurveToRelative(-2.01f, -5f, -4.5f, -5f)
+            curveToRelative(-1.5f, 0f, -2.6f, 0.8f, -3.4f, 1.8f)
+            lineTo(12f, 11.4f)
+            lineTo(9.9f, 8.8f)
+            curveTo(9.1f, 7.8f, 8f, 7f, 6.5f, 7f)
+            close()
+            moveTo(6.5f, 9f)
+            curveToRelative(0.8f, 0f, 1.4f, 0.45f, 2.05f, 1.25f)
+            lineTo(10.7f, 12f)
+            lineToRelative(-2.15f, 1.75f)
+            curveTo(7.9f, 14.55f, 7.3f, 15f, 6.5f, 15f)
+            curveToRelative(-1.38f, 0f, -2.5f, -1.35f, -2.5f, -3f)
+            reflectiveCurveToRelative(1.12f, -3f, 2.5f, -3f)
+            close()
+            moveTo(17.5f, 9f)
+            curveToRelative(1.38f, 0f, 2.5f, 1.35f, 2.5f, 3f)
+            reflectiveCurveToRelative(-1.12f, 3f, -2.5f, 3f)
+            curveToRelative(-0.8f, 0f, -1.4f, -0.45f, -2.05f, -1.25f)
+            lineTo(13.3f, 12f)
+            lineToRelative(2.15f, -1.75f)
+            curveTo(16.1f, 9.45f, 16.7f, 9f, 17.5f, 9f)
+            close()
+        }
+    }
 }

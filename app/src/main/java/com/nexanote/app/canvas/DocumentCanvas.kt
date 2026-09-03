@@ -16,10 +16,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -61,6 +63,14 @@ fun DocumentCanvas(
     onFormulaRequest: (Float, Float) -> Unit = { _, _ -> },
     onGraphRequest: (Float, Float) -> Unit = { _, _ -> },
     onImageRequest: (Float, Float) -> Unit = { _, _ -> },
+    /** Selección vigente, resuelta por el núcleo. Se resalta y se puede arrastrar. */
+    selection: Selection = Selection.Empty,
+    /** El usuario delimitó un área (coordenadas del documento): pide la selección al núcleo. */
+    onSelectArea: (Rect) -> Unit = {},
+    /** El usuario tocó un punto con la herramienta de selección activa. */
+    onSelectTap: (Float, Float) -> Unit = { _, _ -> },
+    /** El usuario soltó tras arrastrar la selección: desplazamiento en coordenadas del documento. */
+    onSelectionMove: (Float, Float) -> Unit = { _, _ -> },
     /** Resuelve la ruta relativa de una imagen a su bitmap ya decodificado, o `null` si aún no está listo. */
     imageProvider: (String) -> ImageBitmap? = { null },
 ) {
@@ -68,9 +78,11 @@ fun DocumentCanvas(
     // hasta que llega la nueva escena del núcleo que ya los incluye: sin parpadeo.
     val active = remember { ActiveStroke() }
     val activeShape = remember { ActiveShape() }
+    val activeSelect = remember { ActiveSelection() }
     LaunchedEffect(scene) {
         active.clear()
         activeShape.clear()
+        activeSelect.clear()
     }
 
     Canvas(
@@ -85,9 +97,15 @@ fun DocumentCanvas(
                     )
                 }
             }
-            .pointerInput(scene.pageId, tool, transform) {
+            .pointerInput(scene.pageId, tool, transform, selection) {
                 val shapeKind = tool.asShapeKind()
                 when {
+                    tool == DrawingTool.Select ->
+                        captureSelection(
+                            activeSelect, transform, selection,
+                            onSelectArea, onSelectTap, onSelectionMove,
+                        )
+
                     tool == DrawingTool.Pen ->
                         captureFreehand(active, transform, onStrokeCommit)
 
@@ -124,6 +142,7 @@ fun DocumentCanvas(
     ) {
         val strokeRevision = active.revision // suscribe el redibujado al trazo activo
         val shapeRevision = activeShape.revision // y a la forma en curso
+        val selectRevision = activeSelect.revision // y al marco/arrastre de selección
         withTransform({
             translate(transform.offsetX, transform.offsetY)
             scale(transform.scale, transform.scale, Offset.Zero)
@@ -132,6 +151,9 @@ fun DocumentCanvas(
             scene.primitives.forEach { drawPrimitive(it, imageProvider) }
             if (strokeRevision >= 0) drawActiveStroke(active.points)
             if (shapeRevision >= 0) drawActiveShape(activeShape)
+            if (selectRevision >= 0) {
+                drawSelection(scene, selection, activeSelect, transform.scale)
+            }
         }
     }
 }
@@ -208,6 +230,173 @@ private suspend fun PointerInputScope.captureShape(
         } else {
             onShapeCommit(kind, bounds)
         }
+    }
+}
+
+/**
+ * Bucle de la herramienta de selección. Nunca retorna.
+ *
+ * Un arrastre que empieza **dentro** del marco de la selección vigente la mueve;
+ * cualquier otro arrastre delimita un área nueva. Si apenas hubo movimiento, el
+ * gesto se interpreta como un toque sobre un elemento. En los tres casos aquí
+ * sólo se acumula geometría: quién queda seleccionado y qué se traslada lo
+ * resuelve el núcleo al soltar.
+ */
+private suspend fun PointerInputScope.captureSelection(
+    activeSelect: ActiveSelection,
+    transform: CanvasTransform,
+    selection: Selection,
+    onSelectArea: (Rect) -> Unit,
+    onSelectTap: (Float, Float) -> Unit,
+    onSelectionMove: (Float, Float) -> Unit,
+) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        val (startX, startY) = transform.screenToModel(down.position.x, down.position.y)
+        val moving = selection.isNotEmpty &&
+            selection.bounds?.contains(Offset(startX, startY)) == true
+        activeSelect.begin(moving, startX, startY)
+        down.consume()
+
+        var cancelled = false
+        while (true) {
+            val event = awaitPointerEvent()
+            // Un segundo puntero es navegación: se cede el gesto a zoom/pan.
+            if (event.changes.size > 1) {
+                cancelled = true
+                break
+            }
+            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+            val (mx, my) = transform.screenToModel(change.position.x, change.position.y)
+            activeSelect.update(mx, my)
+            val lifted = !change.pressed
+            change.consume()
+            if (lifted) break
+        }
+
+        val area = SelectionInput.marquee(
+            activeSelect.startX, activeSelect.startY, activeSelect.endX, activeSelect.endY,
+        )
+        val dx = activeSelect.endX - activeSelect.startX
+        val dy = activeSelect.endY - activeSelect.startY
+        activeSelect.clear()
+
+        when {
+            cancelled -> Unit
+            moving -> if (dx != 0f || dy != 0f) onSelectionMove(dx, dy)
+            SelectionInput.isMarqueeDrag(area) -> onSelectArea(area)
+            else -> onSelectTap(startX, startY)
+        }
+    }
+}
+
+/**
+ * Estado mutable del gesto de selección en curso: si delimita un área o mueve lo
+ * ya seleccionado, y los extremos del arrastre en coordenadas del documento.
+ * Igual que [ActiveStroke], sólo el contador de revisión es observable.
+ */
+private class ActiveSelection {
+    var active = false
+        private set
+    var moving = false
+        private set
+    var startX = 0f
+        private set
+    var startY = 0f
+        private set
+    var endX = 0f
+        private set
+    var endY = 0f
+        private set
+
+    var revision by mutableIntStateOf(0)
+        private set
+
+    fun begin(moving: Boolean, x: Float, y: Float) {
+        active = true
+        this.moving = moving
+        startX = x
+        startY = y
+        endX = x
+        endY = y
+        revision++
+    }
+
+    fun update(x: Float, y: Float) {
+        endX = x
+        endY = y
+        revision++
+    }
+
+    fun clear() {
+        if (!active) return
+        active = false
+        moving = false
+        revision++
+    }
+}
+
+/**
+ * Resalta la selección vigente y, si la hay, el gesto en curso.
+ *
+ * Los grosores se dividen por [scale] para que el realce mantenga el mismo peso
+ * visual con cualquier zoom.
+ */
+private fun DrawScope.drawSelection(
+    scene: ScenePage,
+    selection: Selection,
+    gesture: ActiveSelection,
+    scale: Float,
+) {
+    val accent = Color(0xFF2D6CDF)
+    val hairline = (1.5f / scale.coerceAtLeast(0.01f))
+    val dashes = PathEffect.dashPathEffect(
+        floatArrayOf(8f / scale.coerceAtLeast(0.01f), 6f / scale.coerceAtLeast(0.01f)),
+    )
+
+    // Desplazamiento en curso del arrastre, para que el realce siga al dedo.
+    val (dx, dy) = if (gesture.active && gesture.moving) {
+        (gesture.endX - gesture.startX) to (gesture.endY - gesture.startY)
+    } else {
+        0f to 0f
+    }
+
+    if (selection.isNotEmpty) {
+        val ids = selection.ids.toHashSet()
+        for (hit in scene.hits) {
+            if (hit.id !in ids) continue
+            drawRect(
+                color = accent.copy(alpha = 0.55f),
+                topLeft = Offset(hit.bounds.left + dx, hit.bounds.top + dy),
+                size = Size(hit.bounds.width, hit.bounds.height),
+                style = Stroke(width = hairline, pathEffect = dashes),
+            )
+        }
+        selection.bounds?.let { b ->
+            drawRect(
+                color = accent.copy(alpha = 0.10f),
+                topLeft = Offset(b.left + dx, b.top + dy),
+                size = Size(b.width, b.height),
+            )
+            drawRect(
+                color = accent,
+                topLeft = Offset(b.left + dx, b.top + dy),
+                size = Size(b.width, b.height),
+                style = Stroke(width = hairline * 1.4f),
+            )
+        }
+    }
+
+    // Marco de selección que el usuario está trazando ahora mismo.
+    if (gesture.active && !gesture.moving) {
+        val area = SelectionInput.marquee(gesture.startX, gesture.startY, gesture.endX, gesture.endY)
+        drawRect(accent.copy(alpha = 0.08f), topLeft = area.topLeft, size = area.size)
+        drawRect(
+            color = accent,
+            topLeft = area.topLeft,
+            size = area.size,
+            style = Stroke(width = hairline, pathEffect = dashes),
+        )
     }
 }
 
@@ -348,47 +537,74 @@ private fun DrawScope.drawActiveStroke(points: List<Offset>) {
 private fun DrawScope.drawPageBackground(scene: ScenePage) {
     val w = scene.widthPx
     val h = scene.heightPx
-    // Sombra sutil + hoja.
-    drawRect(Color(0x22000000), topLeft = Offset(3f, 4f), size = Size(w, h))
-    drawRect(scene.background, size = Size(w, h))
+    // Un lienzo infinito no es una hoja: nada de sombra ni de borde, y el fondo
+    // se extiende con generosidad más allá de la extensión ya ocupada.
+    if (scene.infinite) {
+        drawRect(
+            scene.background,
+            topLeft = Offset(-INFINITE_BLEED, -INFINITE_BLEED),
+            size = Size(w + INFINITE_BLEED * 2f, h + INFINITE_BLEED * 2f),
+        )
+    } else {
+        // Sombra sutil + hoja.
+        drawRect(Color(0x22000000), topLeft = Offset(3f, 4f), size = Size(w, h))
+        drawRect(scene.background, size = Size(w, h))
+    }
 
     val guide = Color(0xFFB9C4D0)
+    // El pautado de un lienzo infinito se extiende con el fondo, para que no se
+    // corte en seco en el límite de la extensión ya ocupada.
+    val left = if (scene.infinite) -INFINITE_BLEED else 0f
+    val top = if (scene.infinite) -INFINITE_BLEED else 0f
+    val right = if (scene.infinite) w + INFINITE_BLEED else w
+    val bottom = if (scene.infinite) h + INFINITE_BLEED else h
     when (val t = scene.template) {
         SceneTemplate.Blank -> Unit
         is SceneTemplate.Grid -> {
-            var x = t.spacingPx
-            while (x < w) {
-                drawLine(guide, Offset(x, 0f), Offset(x, h), strokeWidth = 1f)
-                x += t.spacingPx
+            forEachStep(left, right, t.spacingPx) { x ->
+                drawLine(guide, Offset(x, top), Offset(x, bottom), strokeWidth = 1f)
             }
-            var y = t.spacingPx
-            while (y < h) {
-                drawLine(guide, Offset(0f, y), Offset(w, y), strokeWidth = 1f)
-                y += t.spacingPx
+            forEachStep(top, bottom, t.spacingPx) { y ->
+                drawLine(guide, Offset(left, y), Offset(right, y), strokeWidth = 1f)
             }
         }
-        is SceneTemplate.Ruled -> {
-            var y = t.spacingPx
-            while (y < h) {
-                drawLine(guide, Offset(0f, y), Offset(w, y), strokeWidth = 1f)
-                y += t.spacingPx
-            }
+        is SceneTemplate.Ruled -> forEachStep(top, bottom, t.spacingPx) { y ->
+            drawLine(guide, Offset(left, y), Offset(right, y), strokeWidth = 1f)
         }
-        is SceneTemplate.Dotted -> {
-            var y = t.spacingPx
-            while (y < h) {
-                var x = t.spacingPx
-                while (x < w) {
-                    drawCircle(guide, radius = 1.2f, center = Offset(x, y))
-                    x += t.spacingPx
-                }
-                y += t.spacingPx
+        is SceneTemplate.Dotted -> forEachStep(top, bottom, t.spacingPx) { y ->
+            forEachStep(left, right, t.spacingPx) { x ->
+                drawCircle(guide, radius = 1.2f, center = Offset(x, y))
             }
         }
     }
-    // Borde de página.
-    drawRect(Color(0xFF9AA6B2), size = Size(w, h), style = Stroke(width = 1f))
+    // Borde de página: sólo cuando hay hoja que delimitar.
+    if (!scene.infinite) {
+        drawRect(Color(0xFF9AA6B2), size = Size(w, h), style = Stroke(width = 1f))
+    }
 }
+
+/** Sangrado (px de documento) con el que el lienzo infinito se pinta más allá de su contenido. */
+private const val INFINITE_BLEED = 4000f
+
+/**
+ * Recorre `(from, to)` en pasos de `step` empezando en el primer múltiplo de
+ * `step` posterior a `from`, para que el pautado quede alineado con el origen del
+ * documento aunque el recorrido empiece en negativo. Acotado a [MAX_GUIDES]
+ * repeticiones: un `spacing` diminuto nunca debe bloquear el hilo de dibujo.
+ */
+private inline fun forEachStep(from: Float, to: Float, step: Float, action: (Float) -> Unit) {
+    if (step <= 0f || to <= from) return
+    var value = kotlin.math.ceil(from / step) * step
+    var drawn = 0
+    while (value < to && drawn < MAX_GUIDES) {
+        action(value)
+        value += step
+        drawn++
+    }
+}
+
+/** Tope de líneas/puntos de pautado por eje y fotograma. */
+private const val MAX_GUIDES = 4096
 
 private fun DrawScope.drawPrimitive(
     p: ScenePrimitive,

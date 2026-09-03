@@ -234,6 +234,67 @@ impl Element {
         }
     }
 
+    /// **Caja envolvente** del elemento en coordenadas de página (px lógicos @1x).
+    ///
+    /// Es la geometría con la que se resuelven la selección por área, el impacto
+    /// de un toque y el crecimiento del lienzo infinito, de modo que esa decisión
+    /// vive en el núcleo y no se duplica en cada capa de UI.
+    ///
+    /// Para el texto y las fórmulas no hay motor tipográfico en el núcleo: se
+    /// estima la caja a partir del tamaño de fuente y del número de caracteres,
+    /// con la misma métrica aproximada que usa el render.
+    pub fn bounds(&self) -> Rect {
+        match &self.kind {
+            ElementKind::Stroke(s) => stroke_bounds(s),
+            ElementKind::Text(t) => text_bounds(
+                &t.content,
+                t.position,
+                t.style.font_size,
+                t.max_width,
+            ),
+            // El origen de una fórmula es su línea base, igual que el del texto.
+            ElementKind::Formula(f) => {
+                text_bounds(&f.latex, f.position, FORMULA_FONT_SIZE, None)
+            }
+            ElementKind::Shape(sh) => sh.bounds.normalized().inflated(sh.stroke_width * 0.5),
+            ElementKind::Graph(g) => g.frame.normalized(),
+            ElementKind::Image(im) => im.frame.normalized(),
+        }
+    }
+
+    /// Cambia el color de trazo/tinta del elemento. Devuelve `false` si el tipo
+    /// no tiene color de trazo propio (una imagen, por ejemplo).
+    pub fn set_stroke_color(&mut self, color: Color) -> bool {
+        match &mut self.kind {
+            ElementKind::Stroke(s) => {
+                s.color = color;
+                true
+            }
+            ElementKind::Text(t) => {
+                t.style.color = color;
+                true
+            }
+            ElementKind::Shape(sh) => {
+                sh.stroke_color = color;
+                true
+            }
+            ElementKind::Formula(_) | ElementKind::Graph(_) | ElementKind::Image(_) => false,
+        }
+    }
+
+    /// Cambia el relleno del elemento (`None` = sin relleno). Sólo las formas
+    /// cerradas (rectángulo y elipse) admiten relleno; devuelve `false` en el
+    /// resto de casos.
+    pub fn set_fill_color(&mut self, fill: Option<Color>) -> bool {
+        match &mut self.kind {
+            ElementKind::Shape(sh) if sh.kind.is_closed() => {
+                sh.fill_color = fill;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Nombre estable del tipo, para diagnóstico y resúmenes.
     pub fn kind_name(&self) -> &'static str {
         match self.kind {
@@ -244,6 +305,57 @@ impl Element {
             ElementKind::Graph(_) => "Graph",
             ElementKind::Image(_) => "Image",
         }
+    }
+}
+
+/// Tamaño de fuente con el que el render pinta una fórmula (ver `render.rs`).
+const FORMULA_FONT_SIZE: f32 = 18.0;
+
+/// Anchura media de un glifo como fracción del tamaño de fuente. Aproximación
+/// deliberada: el núcleo no mide texto, sólo necesita una caja de impacto útil.
+const GLYPH_ASPECT: f32 = 0.55;
+
+/// Caja de un trazo: extremos de sus puntos, ensanchada medio grosor por lado.
+fn stroke_bounds(s: &Stroke) -> Rect {
+    let mut iter = s.points.iter();
+    let first = match iter.next() {
+        Some(p) => p.position,
+        None => return Rect::new(0.0, 0.0, 0.0, 0.0),
+    };
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (first.x, first.y, first.x, first.y);
+    for p in iter {
+        min_x = min_x.min(p.position.x);
+        min_y = min_y.min(p.position.y);
+        max_x = max_x.max(p.position.x);
+        max_y = max_y.max(p.position.y);
+    }
+    Rect::new(min_x, min_y, max_x - min_x, max_y - min_y).inflated(s.width.max(0.0) * 0.5)
+}
+
+/// Caja estimada de un bloque de texto. `position` es la **línea base** de la
+/// primera línea, así que la caja se levanta un tamaño de fuente por encima.
+fn text_bounds(content: &str, position: Point, font_size: f32, max_width: Option<f32>) -> Rect {
+    let size = font_size.max(1.0);
+    let chars = content.chars().count().max(1) as f32;
+    let natural = chars * size * GLYPH_ASPECT;
+    let (width, lines) = match max_width {
+        Some(limit) if limit > 0.0 && natural > limit => {
+            (limit, (natural / limit).ceil().max(1.0))
+        }
+        _ => (natural, 1.0),
+    };
+    Rect::new(
+        position.x,
+        position.y - size,
+        width,
+        size * 1.25 * lines,
+    )
+}
+
+impl ShapeKind {
+    /// `true` si la forma delimita un área y por tanto admite relleno.
+    pub fn is_closed(self) -> bool {
+        matches!(self, ShapeKind::Rectangle | ShapeKind::Ellipse)
     }
 }
 

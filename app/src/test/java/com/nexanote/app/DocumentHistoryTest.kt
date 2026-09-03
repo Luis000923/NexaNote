@@ -71,6 +71,12 @@ class DocumentHistoryTest {
         override fun documentAddImage(documentJson: String, pageId: String, imageJson: String) = unsupported()
         override fun documentRemoveElement(documentJson: String, pageId: String, elementId: String) = unsupported()
         override fun documentTranslatePageElements(documentJson: String, pageId: String, dx: Float, dy: Float) = unsupported()
+        override fun documentSelectInArea(documentJson: String, pageId: String, areaJson: String) = unsupported()
+        override fun documentSelectAt(documentJson: String, pageId: String, x: Float, y: Float) = unsupported()
+        override fun documentRemoveElements(documentJson: String, pageId: String, idsJson: String) = unsupported()
+        override fun documentTranslateElements(documentJson: String, pageId: String, idsJson: String, dx: Float, dy: Float) = unsupported()
+        override fun documentDuplicateElements(documentJson: String, pageId: String, idsJson: String, dx: Float, dy: Float) = unsupported()
+        override fun documentSetElementsColor(documentJson: String, pageId: String, idsJson: String, colorJson: String) = unsupported()
         override fun documentSummary(documentJson: String) = unsupported()
         override fun documentRenderPage(documentJson: String, pageIndex: Int) = unsupported()
 

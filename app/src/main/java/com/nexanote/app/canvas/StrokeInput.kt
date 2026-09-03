@@ -11,8 +11,11 @@ package com.nexanote.app.canvas
  *    más punteros siguen navegando.
  *  - [Text]: una pulsación simple fija la posición de un bloque de texto y abre
  *    un campo para escribir su contenido con el teclado virtual.
+ *  - [Select]: el arrastre delimita un área y agrupa los elementos que quedan
+ *    dentro; una pulsación simple elige el elemento tocado. Con algo
+ *    seleccionado, arrastrar desde dentro del marco lo mueve.
  */
-enum class DrawingTool { Pen, Pan, Line, Rectangle, Ellipse, Arrow, Text, Formula, Graph, Image }
+enum class DrawingTool { Pen, Pan, Select, Line, Rectangle, Ellipse, Arrow, Text, Formula, Graph, Image }
 
 /** Color RGBA de un trazo, en el mismo formato que espera el núcleo Rust. */
 data class StrokeColor(val r: Int, val g: Int, val b: Int, val a: Int = 255) {

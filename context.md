@@ -46,6 +46,27 @@ autosave offline-first y exportación a PDF (futuro).
 10: Imágenes en el núcleo + selector nativo en Android.
 **11: Exportación a PDF multipágina (`app/.../pdf/`, API nativa `PdfDocument` sobre la escena del núcleo).**
 **12: Integración de IA con credenciales del usuario cifradas (`app/.../ai/`).**
+**13: Gestión de cuadernos (pantalla de inicio), lienzo infinito además de A4,
+selección de área con movimiento/duplicado/borrado contextual, y paleta de color
+de tinta y relleno.**
+
+### Novedades de la Fase 13
+
+- **Núcleo**: `PageSize::Infinite` (el lienzo crece con su contenido en
+  `render.rs`), `Element::bounds()` como única autoridad de la caja de impacto,
+  `Page::{content_bounds, elements_in, element_at, duplicate_elements}` y, en la
+  `api`, `select_in_area`, `select_at`, `remove_elements`, `translate_elements`,
+  `duplicate_elements` y `set_elements_color`. La escena publica ahora `infinite`
+  y una lista `hits` (id, tipo, caja, si admite relleno) para que la UI resalte la
+  selección sin conocer el modelo.
+- **UI**: `HomeScreen.kt` + `NotebookLibrary.kt` (explorador de cuadernos en
+  `filesDir/notebooks/`, un `<id>.json` por documento y un `<id>.meta` diminuto
+  para listar sin parsear nada), `DrawingTool.Select` con marco de selección y
+  arrastre en `DocumentCanvas`, barra contextual (eliminar / duplicar / color /
+  relleno) y paleta `NexaPalette`, toda ella con iconos vectoriales propios.
+- **Compatibilidad**: el autosave de versiones anteriores
+  (`autosave/active-document.json`) se importa como cuaderno la primera vez que se
+  abre el explorador (`NotebookLibrary.importLegacyAutosave`).
 
 ---
 

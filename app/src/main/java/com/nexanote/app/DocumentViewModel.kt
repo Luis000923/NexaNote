@@ -9,6 +9,9 @@ import com.nexanote.app.canvas.ImageInput
 import com.nexanote.app.canvas.SampleDocument
 import com.nexanote.app.canvas.SceneParser
 import com.nexanote.app.canvas.ScenePage
+import com.nexanote.app.canvas.Selection
+import com.nexanote.app.canvas.SelectionInput
+import com.nexanote.app.canvas.SelectionParser
 import com.nexanote.app.canvas.ShapeBounds
 import com.nexanote.app.canvas.ShapeGeometry
 import com.nexanote.app.canvas.ShapeKind
@@ -16,6 +19,7 @@ import com.nexanote.app.canvas.StrokeColor
 import com.nexanote.app.canvas.StrokeGesture
 import com.nexanote.app.canvas.StrokeSample
 import com.nexanote.app.canvas.TextInput
+import androidx.compose.ui.geometry.Rect
 import com.nexanote.app.pdf.AndroidPdfWriter
 import com.nexanote.app.pdf.PdfWriter
 import com.nexanote.core.NativeBridge
@@ -80,6 +84,10 @@ class DocumentViewModel(
     },
     /** Número de páginas del documento. Inyectable para tests sin `org.json`. */
     private val pageCountOf: (String) -> Int = SampleDocument::pageCount,
+    /** Interpreta la respuesta de selección del núcleo. Inyectable para tests sin `org.json`. */
+    private val parseSelection: (String) -> Selection = SelectionParser::parse,
+    /** Interpreta la respuesta de duplicado. Inyectable para tests sin `org.json`. */
+    private val parseDuplicate: (String) -> Pair<String, Selection> = SelectionParser::parseDuplicate,
     /** Serializador de PDF. Inyectable para tests (la API nativa no existe en JVM). */
     private val pdfWriter: PdfWriter = AndroidPdfWriter,
 ) : ViewModel() {
@@ -95,6 +103,16 @@ class DocumentViewModel(
 
     private val _export = MutableStateFlow(PdfExportUiState())
     val export: StateFlow<PdfExportUiState> = _export.asStateFlow()
+
+    private val _selection = MutableStateFlow(Selection.Empty)
+
+    /** Selección vigente, siempre tal y como la resolvió el núcleo. */
+    val selection: StateFlow<Selection> = _selection.asStateFlow()
+
+    private val _inkColor = MutableStateFlow(StrokeColor.Ink)
+
+    /** Color de tinta con el que se crean los trazos y las formas nuevas. */
+    val inkColor: StateFlow<StrokeColor> = _inkColor.asStateFlow()
 
     private val historyController = DocumentHistory(core)
 
@@ -121,6 +139,7 @@ class DocumentViewModel(
     fun reload() = reload(fromAutosave = true)
 
     private fun reload(fromAutosave: Boolean) {
+        _selection.value = Selection.Empty
         _state.value = SceneUiState.Loading
         viewModelScope.launch { _state.value = buildState(fromAutosave) }
     }
@@ -156,7 +175,7 @@ class DocumentViewModel(
         val snapshot = samples.toList()
         edit {
             val strokeJson = StrokeGesture.buildStrokeJson(
-                snapshot, StrokeColor.Ink, StrokeGesture.DEFAULT_WIDTH,
+                snapshot, _inkColor.value, StrokeGesture.DEFAULT_WIDTH,
             )
             core.documentAddStroke(doc, page, strokeJson)
         }
@@ -165,7 +184,8 @@ class DocumentViewModel(
     fun commitShape(kind: ShapeKind, bounds: ShapeBounds) {
         val doc = documentJson ?: return
         val page = pageId ?: return
-        edit { core.documentAddShape(doc, page, ShapeGeometry.toShapeJson(kind, bounds)) }
+        val ink = _inkColor.value
+        edit { core.documentAddShape(doc, page, ShapeGeometry.toShapeJson(kind, bounds, stroke = ink)) }
     }
 
     fun commitText(x: Float, y: Float, content: String) {
@@ -202,6 +222,118 @@ class DocumentViewModel(
         val (w, h) = ImageInput.fitFrame(natW, natH)
         edit {
             core.documentAddImage(doc, page, ImageInput.toImageJson(image.source, x, y, w, h, natW, natH))
+        }
+    }
+
+    // -- Selección, manipulación en lote y color (Fase 13) -----------------
+    // Ninguna de estas operaciones decide qué está seleccionado ni qué se puede
+    // colorear: eso lo resuelve el núcleo. Aquí sólo se orquesta y se publica.
+
+    /** Pide al núcleo los elementos contenidos en el área trazada por el usuario. */
+    fun selectArea(area: Rect) {
+        val doc = documentJson ?: return
+        val page = pageId ?: return
+        resolveSelection { parseSelection(core.documentSelectInArea(doc, page, SelectionInput.toAreaJson(area))) }
+    }
+
+    /** Pide al núcleo el elemento tocado; deselecciona si no hay ninguno debajo. */
+    fun selectAt(x: Float, y: Float) {
+        val doc = documentJson ?: return
+        val page = pageId ?: return
+        resolveSelection { parseSelection(core.documentSelectAt(doc, page, x, y)) }
+    }
+
+    /** Vacía la selección sin tocar el documento. */
+    fun clearSelection() {
+        _selection.value = Selection.Empty
+    }
+
+    /** Elimina de la página los elementos seleccionados. */
+    fun deleteSelection() {
+        val ids = _selection.value.ids
+        if (ids.isEmpty()) return
+        val doc = documentJson ?: return
+        val page = pageId ?: return
+        val idsJson = SelectionInput.toIdsJson(ids)
+        // La selección desaparece con sus elementos.
+        edit(keepSelection = false) { core.documentRemoveElements(doc, page, idsJson) }
+    }
+
+    /** Traslada la selección `(dx, dy)` en coordenadas del documento. */
+    fun moveSelection(dx: Float, dy: Float) {
+        val ids = _selection.value.ids
+        if (ids.isEmpty() || (dx == 0f && dy == 0f)) return
+        val doc = documentJson ?: return
+        val page = pageId ?: return
+        val idsJson = SelectionInput.toIdsJson(ids)
+        edit { core.documentTranslateElements(doc, page, idsJson, dx, dy) }
+    }
+
+    /**
+     * Duplica la selección desplazada, y deja seleccionadas **las copias**, que es
+     * lo que se espera poder seguir moviendo justo después.
+     */
+    fun duplicateSelection() {
+        val ids = _selection.value.ids
+        if (ids.isEmpty()) return
+        val doc = documentJson ?: return
+        val page = pageId ?: return
+        val idsJson = SelectionInput.toIdsJson(ids)
+        val offset = SelectionInput.DUPLICATE_OFFSET
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.Default) {
+                runCatching {
+                    val (updated, copies) = parseDuplicate(
+                        core.documentDuplicateElements(doc, page, idsJson, offset, offset),
+                    )
+                    Triple(updated, copies, renderScene(updated, 0))
+                }
+            }
+            result.onSuccess { (updated, copies, scene) ->
+                documentJson = updated
+                _selection.value = copies
+                _state.value = SceneUiState.Ready(scene)
+                withContext(Dispatchers.Default) { historyController.record(updated) }
+                publishHistory()
+                autosave(updated)
+            }
+        }
+    }
+
+    /**
+     * Fija el color de tinta activo y, si hay selección, se lo aplica. Así el mismo
+     * gesto sirve para "voy a escribir en rojo" y para "pon esto en rojo".
+     */
+    fun applyInkColor(color: StrokeColor) {
+        _inkColor.value = color
+        val ids = _selection.value.ids
+        if (ids.isEmpty()) return
+        val doc = documentJson ?: return
+        val page = pageId ?: return
+        val idsJson = SelectionInput.toIdsJson(ids)
+        val colorJson = SelectionInput.toStrokeColorJson(color)
+        edit { core.documentSetElementsColor(doc, page, idsJson, colorJson) }
+    }
+
+    /**
+     * Rellena las formas cerradas de la selección; `null` quita el relleno. Los
+     * elementos que no admiten relleno el núcleo los deja intactos.
+     */
+    fun applyFillColor(color: StrokeColor?) {
+        val ids = _selection.value.ids
+        if (ids.isEmpty()) return
+        val doc = documentJson ?: return
+        val page = pageId ?: return
+        val idsJson = SelectionInput.toIdsJson(ids)
+        val colorJson = SelectionInput.toFillColorJson(color)
+        edit { core.documentSetElementsColor(doc, page, idsJson, colorJson) }
+    }
+
+    /** Resuelve una selección en el núcleo fuera del hilo principal y la publica. */
+    private fun resolveSelection(resolve: () -> Selection) {
+        viewModelScope.launch {
+            withContext(Dispatchers.Default) { runCatching(resolve) }
+                .onSuccess { _selection.value = it }
         }
     }
 
@@ -276,7 +408,7 @@ class DocumentViewModel(
      * documento resultante, lo registra en el historial, lo autoguarda y publica
      * la escena. Un fallo del núcleo deja la escena y el historial intactos.
      */
-    private fun edit(mutate: suspend () -> String) {
+    private fun edit(keepSelection: Boolean = true, mutate: suspend () -> String) {
         viewModelScope.launch {
             val result = withContext(Dispatchers.Default) {
                 runCatching {
@@ -286,6 +418,10 @@ class DocumentViewModel(
             }
             result.onSuccess { (updated, scene) ->
                 documentJson = updated
+                // La selección se reproyecta sobre las cajas de la escena nueva
+                // (o se vacía si sus elementos ya no existen).
+                _selection.value =
+                    if (keepSelection) _selection.value.refreshed(scene.hits) else Selection.Empty
                 _state.value = SceneUiState.Ready(scene)
                 withContext(Dispatchers.Default) { historyController.record(updated) }
                 publishHistory()
@@ -305,6 +441,7 @@ class DocumentViewModel(
             result.onSuccess { pair ->
                 pair?.let { (doc, scene) ->
                     documentJson = doc
+                    _selection.value = _selection.value.refreshed(scene.hits)
                     _state.value = SceneUiState.Ready(scene)
                     publishHistory()
                     autosave(doc)

@@ -1,6 +1,7 @@
 package com.nexanote.app.canvas
 
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import org.json.JSONObject
@@ -18,6 +19,11 @@ object SceneParser {
                 for (i in 0 until arr.length()) add(parsePrimitive(arr.getJSONObject(i)))
             }
         }
+        val hits = root.optJSONArray("hits").let { arr ->
+            if (arr == null) emptyList() else buildList(arr.length()) {
+                for (i in 0 until arr.length()) add(parseHit(arr.getJSONObject(i)))
+            }
+        }
         return ScenePage(
             pageIndex = root.getInt("page_index"),
             pageId = root.getString("page_id"),
@@ -25,9 +31,21 @@ object SceneParser {
             heightPx = root.getDouble("height_px").toFloat(),
             background = color(root.getJSONObject("background")),
             template = parseTemplate(root.getJSONObject("template")),
+            infinite = root.optBoolean("infinite", false),
             primitives = primitives,
+            hits = hits,
         )
     }
+
+    private fun parseHit(o: JSONObject): SceneHit = SceneHit(
+        id = o.getString("id"),
+        kind = o.getString("kind"),
+        bounds = Rect(
+            offset = Offset(o.f("x"), o.f("y")),
+            size = Size(o.f("width"), o.f("height")),
+        ),
+        fillable = o.optBoolean("fillable", false),
+    )
 
     private fun parseTemplate(o: JSONObject): SceneTemplate {
         val spacing = { o.getDouble("spacing_px").toFloat() }
@@ -146,4 +164,35 @@ object SceneParser {
         blue = o.getInt("b"),
         alpha = o.getInt("a"),
     )
+}
+
+/**
+ * Traduce las respuestas de selección del núcleo (`documentSelectInArea`,
+ * `documentSelectAt`, `documentDuplicateElements`). Igual que [SceneParser], es
+ * puro mapeo de datos.
+ */
+object SelectionParser {
+
+    /** `{"ids":[...],"bounds":{...}|null}` → [Selection]. */
+    fun parse(json: String): Selection = parse(JSONObject(json))
+
+    /** `{"document":"<json>","selection":{...}}` → documento + selección de las copias. */
+    fun parseDuplicate(json: String): Pair<String, Selection> {
+        val root = JSONObject(json)
+        return root.getString("document") to parse(root.getJSONObject("selection"))
+    }
+
+    private fun parse(o: JSONObject): Selection {
+        val arr = o.getJSONArray("ids")
+        val ids = buildList(arr.length()) {
+            for (i in 0 until arr.length()) add(arr.getString(i))
+        }
+        val bounds = o.optJSONObject("bounds")?.let { b ->
+            Rect(
+                offset = Offset(b.getDouble("x").toFloat(), b.getDouble("y").toFloat()),
+                size = Size(b.getDouble("width").toFloat(), b.getDouble("height").toFloat()),
+            )
+        }
+        return Selection(ids, bounds)
+    }
 }
