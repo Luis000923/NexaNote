@@ -102,6 +102,7 @@ class MainActivity : ComponentActivity() {
                 loadDocument = { core ->
                     SampleDocument.buildBlank(core, notebook.title, notebook.canvas.pageSpecJson)
                 },
+                newPageSpecJson = notebook.canvas.pageSpecJson,
             ) as T
         }
     }

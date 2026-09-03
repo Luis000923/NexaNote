@@ -1491,4 +1491,108 @@ mod tests {
             Err(DocumentError::Serialization(_))
         ));
     }
+
+    // -----------------------------------------------------------------------
+    // Selección/manipulación en lote (Fase 13): entradas vacías, límites y
+    // datos malformados. Todo error debe ser un `DocumentError`, nunca `panic`.
+    // -----------------------------------------------------------------------
+
+    const MISSING_PAGE: &str = "00000000000000000000000000000009";
+
+    #[test]
+    fn select_in_area_on_an_empty_page_returns_nothing() {
+        let (doc, page_id) = doc_with_blank_page();
+        let sel: serde_json::Value = serde_json::from_str(
+            &select_in_area(&doc, &page_id, r#"{"x":0.0,"y":0.0,"width":9999.0,"height":9999.0}"#)
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(sel["ids"].as_array().unwrap().is_empty());
+        assert!(sel["bounds"].is_null());
+    }
+
+    #[test]
+    fn select_in_area_rejects_a_non_finite_area() {
+        let (doc, page_id) = doc_with_blank_page();
+        assert!(matches!(
+            select_in_area(&doc, &page_id, r#"{"x":0.0,"y":0.0,"width":1e400,"height":10.0}"#),
+            Err(DocumentError::InvalidArgument(_)) | Err(DocumentError::Serialization(_))
+        ));
+    }
+
+    #[test]
+    fn selection_apis_report_a_missing_page() {
+        let (doc, _) = doc_with_blank_page();
+        assert!(matches!(
+            select_in_area(&doc, MISSING_PAGE, r#"{"x":0.0,"y":0.0,"width":1.0,"height":1.0}"#),
+            Err(DocumentError::PageNotFound(_))
+        ));
+        assert!(matches!(
+            select_at(&doc, MISSING_PAGE, 0.0, 0.0),
+            Err(DocumentError::PageNotFound(_))
+        ));
+        assert!(matches!(
+            remove_elements(&doc, MISSING_PAGE, r#"[]"#),
+            Err(DocumentError::PageNotFound(_))
+        ));
+        assert!(matches!(
+            translate_elements(&doc, MISSING_PAGE, r#"[]"#, 1.0, 1.0),
+            Err(DocumentError::PageNotFound(_))
+        ));
+        assert!(matches!(
+            duplicate_elements(&doc, MISSING_PAGE, r#"[]"#, 1.0, 1.0),
+            Err(DocumentError::PageNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn translate_and_duplicate_reject_non_finite_offsets() {
+        let (doc, page_id, ids) = doc_with_two_elements();
+        let list = format!(r#"["{}"]"#, ids[0]);
+        assert!(matches!(
+            translate_elements(&doc, &page_id, &list, f32::NAN, 0.0),
+            Err(DocumentError::InvalidArgument(_))
+        ));
+        assert!(matches!(
+            duplicate_elements(&doc, &page_id, &list, 0.0, f32::INFINITY),
+            Err(DocumentError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn batch_ops_accept_an_empty_id_list_as_a_no_op() {
+        let (doc, page_id, _) = doc_with_two_elements();
+        let removed = remove_elements(&doc, &page_id, r#"[]"#).unwrap();
+        assert_eq!(Document::from_json(&removed).unwrap().element_count(), 2);
+        let moved = translate_elements(&doc, &page_id, r#"[]"#, 10.0, 10.0).unwrap();
+        assert_eq!(
+            Document::from_json(&moved).unwrap().pages[0].elements,
+            Document::from_json(&doc).unwrap().pages[0].elements,
+        );
+    }
+
+    #[test]
+    fn batch_ops_reject_malformed_id_and_color_payloads() {
+        let (doc, page_id, ids) = doc_with_two_elements();
+        assert!(matches!(
+            remove_elements(&doc, &page_id, r#"["not-hex-!!"]"#),
+            Err(DocumentError::InvalidId(_))
+        ));
+        assert!(matches!(
+            remove_elements(&doc, &page_id, r#"{not a list}"#),
+            Err(DocumentError::Serialization(_))
+        ));
+        assert!(matches!(
+            set_elements_color(&doc, &page_id, &format!(r#"["{}"]"#, ids[0]), r#"{"target":"glow"}"#),
+            Err(DocumentError::Serialization(_))
+        ));
+    }
+
+    #[test]
+    fn select_at_ignores_a_non_finite_point_without_panicking() {
+        let (doc, page_id, _) = doc_with_two_elements();
+        let hit: serde_json::Value =
+            serde_json::from_str(&select_at(&doc, &page_id, f32::NAN, 0.0).unwrap()).unwrap();
+        assert!(hit["ids"].as_array().unwrap().is_empty());
+    }
 }

@@ -12,7 +12,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
@@ -85,7 +87,14 @@ fun DocumentCanvas(
         activeSelect.clear()
     }
 
-    Canvas(
+    // La captura de puntero lee siempre el `transform`/`selection` más recientes
+    // sin reiniciar el pipeline de gestos: así un zoom o una nueva selección no
+    // aborta un trazo en curso ni descarta muestras (lo que se veía como "líneas
+    // rectas") y no reconstruye la maquinaria de gestos en cada fotograma.
+    val currentTransform by rememberUpdatedState(transform)
+    val currentSelection by rememberUpdatedState(selection)
+
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color(0xFFE9EBEF))
@@ -93,46 +102,46 @@ fun DocumentCanvas(
             .pointerInput(scene.pageId) {
                 detectTransformGestures { centroid, pan, zoom, _ ->
                     onTransformChange(
-                        transform.applyGesture(pan.x, pan.y, zoom, centroid.x, centroid.y),
+                        currentTransform.applyGesture(pan.x, pan.y, zoom, centroid.x, centroid.y),
                     )
                 }
             }
-            .pointerInput(scene.pageId, tool, transform, selection) {
+            .pointerInput(scene.pageId, tool) {
                 val shapeKind = tool.asShapeKind()
                 when {
                     tool == DrawingTool.Select ->
                         captureSelection(
-                            activeSelect, transform, selection,
+                            activeSelect, { currentTransform }, { currentSelection },
                             onSelectArea, onSelectTap, onSelectionMove,
                         )
 
                     tool == DrawingTool.Pen ->
-                        captureFreehand(active, transform, onStrokeCommit)
+                        captureFreehand(active, { currentTransform }, onStrokeCommit)
 
                     shapeKind != null ->
-                        captureShape(shapeKind, activeShape, transform, onShapeCommit)
+                        captureShape(shapeKind, activeShape, { currentTransform }, onShapeCommit)
 
                     tool == DrawingTool.Text ->
                         detectTapGestures { pos ->
-                            val (mx, my) = transform.screenToModel(pos.x, pos.y)
+                            val (mx, my) = currentTransform.screenToModel(pos.x, pos.y)
                             onTextRequest(mx, my)
                         }
 
                     tool == DrawingTool.Formula ->
                         detectTapGestures { pos ->
-                            val (mx, my) = transform.screenToModel(pos.x, pos.y)
+                            val (mx, my) = currentTransform.screenToModel(pos.x, pos.y)
                             onFormulaRequest(mx, my)
                         }
 
                     tool == DrawingTool.Graph ->
                         detectTapGestures { pos ->
-                            val (mx, my) = transform.screenToModel(pos.x, pos.y)
+                            val (mx, my) = currentTransform.screenToModel(pos.x, pos.y)
                             onGraphRequest(mx, my)
                         }
 
                     tool == DrawingTool.Image ->
                         detectTapGestures { pos ->
-                            val (mx, my) = transform.screenToModel(pos.x, pos.y)
+                            val (mx, my) = currentTransform.screenToModel(pos.x, pos.y)
                             onImageRequest(mx, my)
                         }
 
@@ -140,19 +149,33 @@ fun DocumentCanvas(
                 }
             },
     ) {
-        val strokeRevision = active.revision // suscribe el redibujado al trazo activo
-        val shapeRevision = activeShape.revision // y a la forma en curso
-        val selectRevision = activeSelect.revision // y al marco/arrastre de selección
-        withTransform({
-            translate(transform.offsetX, transform.offsetY)
-            scale(transform.scale, transform.scale, Offset.Zero)
-        }) {
-            drawPageBackground(scene)
-            scene.primitives.forEach { drawPrimitive(it, imageProvider) }
-            if (strokeRevision >= 0) drawActiveStroke(active.points)
-            if (shapeRevision >= 0) drawActiveShape(activeShape)
-            if (selectRevision >= 0) {
-                drawSelection(scene, selection, activeSelect, transform.scale)
+        // Capa 1 -- la escena que produce el núcleo. Sólo se repinta cuando cambian
+        // la escena o la transformación: nunca por una muestra del trazo en curso.
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            withTransform({
+                translate(transform.offsetX, transform.offsetY)
+                scale(transform.scale, transform.scale, Offset.Zero)
+            }) {
+                drawPageBackground(scene)
+                scene.primitives.forEach { drawPrimitive(it, imageProvider) }
+            }
+        }
+        // Capa 2 -- trazo / forma / marco de selección en curso. Es ligera (unos
+        // pocos `drawPath`), así que puede invalidarse en cada muestra del puntero
+        // sin arrastrar consigo el redibujado de toda la escena.
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val strokeRevision = active.revision // suscribe el redibujado al trazo activo
+            val shapeRevision = activeShape.revision // y a la forma en curso
+            val selectRevision = activeSelect.revision // y al marco/arrastre de selección
+            withTransform({
+                translate(transform.offsetX, transform.offsetY)
+                scale(transform.scale, transform.scale, Offset.Zero)
+            }) {
+                if (strokeRevision >= 0) drawActiveStroke(active.points)
+                if (shapeRevision >= 0) drawActiveShape(activeShape)
+                if (selectRevision >= 0) {
+                    drawSelection(scene, selection, activeSelect, transform.scale)
+                }
             }
         }
     }
@@ -161,14 +184,17 @@ fun DocumentCanvas(
 /** Bucle de captura de un trazo a mano alzada. Nunca retorna. */
 private suspend fun PointerInputScope.captureFreehand(
     active: ActiveStroke,
-    transform: CanvasTransform,
+    transform: () -> CanvasTransform,
     onStrokeCommit: (List<StrokeSample>) -> Unit,
 ) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
-        val gesture = StrokeGesture(transform, down.uptimeMillis)
+        // La transformación queda fijada al empezar el trazo: durante el trazo no
+        // cambia, y así cada muestra se proyecta con un marco de referencia estable.
+        val tf = transform()
+        val gesture = StrokeGesture(tf, down.uptimeMillis)
         active.begin()
-        recordSample(gesture, active, transform, down)
+        recordSample(gesture, active, tf, down)
         down.consume()
 
         var cancelled = false
@@ -180,7 +206,7 @@ private suspend fun PointerInputScope.captureFreehand(
                 break
             }
             val change = event.changes.firstOrNull { it.id == down.id } ?: break
-            recordSample(gesture, active, transform, change)
+            recordSample(gesture, active, tf, change)
             val lifted = !change.pressed
             change.consume()
             if (lifted) break
@@ -198,12 +224,13 @@ private suspend fun PointerInputScope.captureFreehand(
 private suspend fun PointerInputScope.captureShape(
     kind: ShapeKind,
     activeShape: ActiveShape,
-    transform: CanvasTransform,
+    transform: () -> CanvasTransform,
     onShapeCommit: (ShapeKind, ShapeBounds) -> Unit,
 ) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
-        val (startX, startY) = transform.screenToModel(down.position.x, down.position.y)
+        val tf = transform()
+        val (startX, startY) = tf.screenToModel(down.position.x, down.position.y)
         activeShape.begin(kind, startX, startY)
         down.consume()
 
@@ -215,7 +242,7 @@ private suspend fun PointerInputScope.captureShape(
                 break
             }
             val change = event.changes.firstOrNull { it.id == down.id } ?: break
-            val (mx, my) = transform.screenToModel(change.position.x, change.position.y)
+            val (mx, my) = tf.screenToModel(change.position.x, change.position.y)
             activeShape.update(mx, my)
             val lifted = !change.pressed
             change.consume()
@@ -244,15 +271,17 @@ private suspend fun PointerInputScope.captureShape(
  */
 private suspend fun PointerInputScope.captureSelection(
     activeSelect: ActiveSelection,
-    transform: CanvasTransform,
-    selection: Selection,
+    transform: () -> CanvasTransform,
+    selectionOf: () -> Selection,
     onSelectArea: (Rect) -> Unit,
     onSelectTap: (Float, Float) -> Unit,
     onSelectionMove: (Float, Float) -> Unit,
 ) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
-        val (startX, startY) = transform.screenToModel(down.position.x, down.position.y)
+        val tf = transform()
+        val selection = selectionOf()
+        val (startX, startY) = tf.screenToModel(down.position.x, down.position.y)
         val moving = selection.isNotEmpty &&
             selection.bounds?.contains(Offset(startX, startY)) == true
         activeSelect.begin(moving, startX, startY)
@@ -267,7 +296,7 @@ private suspend fun PointerInputScope.captureSelection(
                 break
             }
             val change = event.changes.firstOrNull { it.id == down.id } ?: break
-            val (mx, my) = transform.screenToModel(change.position.x, change.position.y)
+            val (mx, my) = tf.screenToModel(change.position.x, change.position.y)
             activeSelect.update(mx, my)
             val lifted = !change.pressed
             change.consume()
@@ -501,13 +530,26 @@ private fun shapePreviewPrimitive(kind: ShapeKind, b: ShapeBounds): ScenePrimiti
     }
 }
 
-/** Registra la muestra actual del puntero en el trazo en curso. */
+/**
+ * Registra en el trazo en curso **todas** las posiciones que trae el evento: los
+ * `historical` (muestras intermedias que el sistema agrupó entre dos fotogramas,
+ * a la frecuencia real del panel/stylus) y, por último, la posición actual. Sin
+ * esto, un panel de 240 Hz sobre una UI de 60/120 Hz entrega un punto por
+ * fotograma y las curvas rápidas se ven como segmentos rectos.
+ */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 private fun recordSample(
     gesture: StrokeGesture,
     active: ActiveStroke,
     transform: CanvasTransform,
     change: PointerInputChange,
 ) {
+    for (h in change.historical) {
+        // La presión histórica no está en esta versión de Compose: se usa la de
+        // la muestra actual, suficiente para el grosor variable del trazo.
+        gesture.addScreenPoint(h.position.x, h.position.y, change.pressure, h.uptimeMillis)
+        active.add(modelPoint(transform, h.position))
+    }
     gesture.addScreenPoint(change.position.x, change.position.y, change.pressure, change.uptimeMillis)
     active.add(modelPoint(transform, change.position))
 }

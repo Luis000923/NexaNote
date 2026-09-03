@@ -41,5 +41,22 @@ class NotebookLibraryTest {
         assertEquals(CanvasKind.Infinite, CanvasKind.fromName("Infinite"))
         assertEquals(CanvasKind.A4, CanvasKind.fromName("Hexagonal"))
         assertEquals(CanvasKind.A4, CanvasKind.fromName(null))
+        // El nombre guardado es sensible a mayúsculas: un valor deformado no cuela.
+        assertEquals(CanvasKind.A4, CanvasKind.fromName("infinite"))
+    }
+
+    @Test
+    fun everyCanvasKindHasATemplateAndAHumanLabel() {
+        for (kind in CanvasKind.entries) {
+            assertTrue(kind.pageSpecJson.contains(""""template""""))
+            assertTrue(kind.label.isNotBlank())
+        }
+    }
+
+    @Test
+    fun safeIdKeepsHyphensAndDigitsButStripsSeparators() {
+        assertEquals("nb-1788-ab", NotebookLibrary.safeId("nb-1788-ab"))
+        assertEquals("abc", NotebookLibrary.safeId("a/b\\c"))
+        assertEquals("nb_1a", NotebookLibrary.safeId("nb_1.a"))
     }
 }

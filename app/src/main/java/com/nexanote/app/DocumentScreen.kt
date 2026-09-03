@@ -79,6 +79,7 @@ fun DocumentScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val history by viewModel.history.collectAsState()
+    val pages by viewModel.pages.collectAsState()
     val export by viewModel.export.collectAsState()
     val selection by viewModel.selection.collectAsState()
     val inkColor by viewModel.inkColor.collectAsState()
@@ -124,6 +125,12 @@ fun DocumentScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = viewModel::addPage,
+                        enabled = state is SceneUiState.Ready,
+                    ) {
+                        Icon(NexaIcons.PageAdd, contentDescription = "Nueva página")
+                    }
                     IconButton(onClick = { showAssistant = true }) {
                         Icon(NexaIcons.Assistant, contentDescription = "Asistente de IA")
                     }
@@ -287,6 +294,20 @@ fun DocumentScreen(
                         inkColor = inkColor,
                         onOpenInkPalette = { palette = PaletteMode.Ink },
                     )
+
+                    // Navegador de páginas: sólo cuando hay más de una y la barra
+                    // de selección no está ocupando ese mismo borde superior.
+                    if (!selection.isNotEmpty && pages.count > 1) {
+                        PageNavigator(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(16.dp),
+                            pages = pages,
+                            onPrevious = { viewModel.goToPage(pages.index - 1) },
+                            onNext = { viewModel.goToPage(pages.index + 1) },
+                            onAddPage = viewModel::addPage,
+                        )
+                    }
 
                     // Barra contextual de la selección: eliminar, duplicar y color.
                     if (selection.isNotEmpty) {
@@ -511,6 +532,41 @@ private fun ToolPalette(
                     .background(inkColor.toComposeColor())
                     .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
             )
+        }
+    }
+}
+
+/**
+ * Navegador de páginas: anterior / "n de total" / siguiente, y un atajo para
+ * añadir una página nueva. Sólo iconos vectoriales, ningún emoji.
+ */
+@Composable
+private fun PageNavigator(
+    modifier: Modifier,
+    pages: PageUiState,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onAddPage: () -> Unit,
+) {
+    Card(modifier = modifier, shape = RoundedCornerShape(20.dp)) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onPrevious, enabled = pages.hasPrevious) {
+                Icon(NexaIcons.Back, contentDescription = "Página anterior")
+            }
+            Text(
+                text = "${pages.index + 1} / ${pages.count}",
+                style = MaterialTheme.typography.labelLarge,
+            )
+            IconButton(onClick = onNext, enabled = pages.hasNext) {
+                Icon(NexaIcons.Forward, contentDescription = "Página siguiente")
+            }
+            IconButton(onClick = onAddPage) {
+                Icon(NexaIcons.PageAdd, contentDescription = "Nueva página")
+            }
         }
     }
 }

@@ -641,6 +641,37 @@ object NexaIcons {
         }
     }
 
+    /** Nueva página: una hoja con un signo "más" en el centro. */
+    val PageAdd: ImageVector by lazy {
+        vector("nexa_page_add", PathFillType.EvenOdd) {
+            // Hoja (anillo rectangular con la esquina superior derecha doblada).
+            moveTo(5f, 2f); lineTo(14f, 2f); lineTo(19f, 7f); lineTo(19f, 22f); lineTo(5f, 22f)
+            close()
+            moveTo(7f, 4f); lineTo(13f, 4f); lineTo(13f, 8f); lineTo(17f, 8f); lineTo(17f, 20f)
+            lineTo(7f, 20f); close()
+            // Signo "más" centrado en la hoja.
+            moveTo(11f, 9.5f); lineTo(13f, 9.5f); lineTo(13f, 13f); lineTo(16.5f, 13f)
+            lineTo(16.5f, 15f); lineTo(13f, 15f); lineTo(13f, 18.5f); lineTo(11f, 18.5f)
+            lineTo(11f, 15f); lineTo(7.5f, 15f); lineTo(7.5f, 13f); lineTo(11f, 13f); close()
+        }
+    }
+
+    /** Avanzar: flecha hacia la derecha (espejo de [Back]). */
+    val Forward: ImageVector by lazy {
+        vector("nexa_forward") {
+            moveTo(13f, 4f)
+            lineTo(11.6f, 5.4f)
+            lineTo(17.2f, 11f)
+            lineTo(4f, 11f)
+            lineTo(4f, 13f)
+            lineTo(17.2f, 13f)
+            lineTo(11.6f, 18.6f)
+            lineTo(13f, 20f)
+            lineTo(21f, 12f)
+            close()
+        }
+    }
+
     /** Lienzo infinito: el lazo del símbolo de infinito. */
     val InfiniteCanvas: ImageVector by lazy {
         vector("nexa_infinite_canvas", PathFillType.EvenOdd) {

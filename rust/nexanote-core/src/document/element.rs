@@ -534,6 +534,119 @@ mod tests {
         }
     }
 
+    fn rect_shape(kind: ShapeKind, bounds: Rect, stroke_width: f32) -> Element {
+        Element::new(
+            ElementKind::Shape(Shape {
+                kind,
+                bounds,
+                stroke_color: Color::BLACK,
+                fill_color: None,
+                stroke_width,
+            }),
+            0,
+        )
+    }
+
+    #[test]
+    fn empty_stroke_bounds_is_a_zero_rect() {
+        let el = Element::new(
+            ElementKind::Stroke(Stroke { points: vec![], color: Color::BLACK, width: 2.0 }),
+            0,
+        );
+        assert_eq!(el.bounds(), Rect::new(0.0, 0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn stroke_bounds_span_points_and_inflate_by_half_width() {
+        let el = Element::new(ElementKind::Stroke(sample_stroke()), 0);
+        // Puntos (0,0)-(10,0), grosor 2.0 -> caja ensanchada 1.0 por lado.
+        assert_eq!(el.bounds(), Rect::new(-1.0, -1.0, 12.0, 2.0));
+    }
+
+    #[test]
+    fn shape_bounds_normalize_and_inflate_by_half_stroke() {
+        let el = rect_shape(ShapeKind::Rectangle, Rect::new(10.0, 10.0, -20.0, -20.0), 4.0);
+        // Normalizado a (−10,−10,20,20) e inflado 2.0 por lado.
+        assert_eq!(el.bounds(), Rect::new(-12.0, -12.0, 24.0, 24.0));
+    }
+
+    #[test]
+    fn graph_and_image_bounds_are_the_normalized_frame() {
+        let graph = Element::new(
+            ElementKind::Graph(Graph {
+                expression: "x".to_string(),
+                ast: None,
+                var: "x".to_string(),
+                frame: Rect::new(0.0, 0.0, 100.0, 50.0),
+                x_min: -1.0,
+                x_max: 1.0,
+                samples: 32,
+            }),
+            0,
+        );
+        assert_eq!(graph.bounds(), Rect::new(0.0, 0.0, 100.0, 50.0));
+
+        let image = Element::new(
+            ElementKind::Image(ImageRef {
+                source: "images/a.png".to_string(),
+                frame: Rect::new(5.0, 6.0, 40.0, 30.0),
+                natural_width: 400.0,
+                natural_height: 300.0,
+            }),
+            0,
+        );
+        assert_eq!(image.bounds(), Rect::new(5.0, 6.0, 40.0, 30.0));
+    }
+
+    #[test]
+    fn text_bounds_lift_the_box_above_the_baseline() {
+        let el = Element::new(
+            ElementKind::Text(TextBox {
+                content: "abcd".to_string(),
+                position: Point::new(10.0, 100.0),
+                style: TextStyle { font_size: 16.0, ..TextStyle::default() },
+                max_width: None,
+            }),
+            0,
+        );
+        let b = el.bounds();
+        assert_eq!((b.x, b.y), (10.0, 84.0));
+        assert!(b.width > 0.0 && b.height > 0.0);
+    }
+
+    #[test]
+    fn set_stroke_color_only_succeeds_where_there_is_ink() {
+        let mut stroke = Element::new(ElementKind::Stroke(sample_stroke()), 0);
+        assert!(stroke.set_stroke_color(Color::rgb(1, 2, 3)));
+
+        let mut graph = Element::new(
+            ElementKind::Graph(Graph {
+                expression: "x".to_string(),
+                ast: None,
+                var: "x".to_string(),
+                frame: Rect::new(0.0, 0.0, 20.0, 20.0),
+                x_min: 0.0,
+                x_max: 1.0,
+                samples: 8,
+            }),
+            0,
+        );
+        assert!(!graph.set_stroke_color(Color::rgb(1, 2, 3)));
+    }
+
+    #[test]
+    fn set_fill_color_only_succeeds_on_closed_shapes() {
+        let mut rect = rect_shape(ShapeKind::Rectangle, Rect::new(0.0, 0.0, 10.0, 10.0), 1.0);
+        assert!(rect.set_fill_color(Some(Color::rgb(9, 9, 9))));
+        assert!(rect.set_fill_color(None));
+
+        let mut line = rect_shape(ShapeKind::Line, Rect::new(0.0, 0.0, 10.0, 10.0), 1.0);
+        assert!(!line.set_fill_color(Some(Color::rgb(9, 9, 9))));
+
+        let mut stroke = Element::new(ElementKind::Stroke(sample_stroke()), 0);
+        assert!(!stroke.set_fill_color(Some(Color::rgb(9, 9, 9))));
+    }
+
     #[test]
     fn formula_ast_roundtrips_json() {
         let f = Formula {

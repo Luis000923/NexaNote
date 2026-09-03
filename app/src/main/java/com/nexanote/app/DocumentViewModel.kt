@@ -44,6 +44,16 @@ sealed interface SceneUiState {
 /** Estado de los controles de historial (habilitar/deshabilitar Undo y Redo). */
 data class HistoryUiState(val canUndo: Boolean = false, val canRedo: Boolean = false)
 
+/**
+ * Estado del navegador de páginas: en qué página está la vista (`index`, base 0) y
+ * cuántas tiene el documento. La UI muestra `index + 1 / count` y decide si los
+ * controles de anterior/siguiente están activos.
+ */
+data class PageUiState(val index: Int = 0, val count: Int = 1) {
+    val hasPrevious: Boolean get() = index > 0
+    val hasNext: Boolean get() = index < count - 1
+}
+
 /** Fase de la exportación a PDF (Fase 11). */
 enum class ExportPhase { Idle, Working, Done, Failed }
 
@@ -78,6 +88,11 @@ class DocumentViewModel(
         SampleDocument.buildDocument(it)
     },
     private val pageIdOf: (String) -> String = SampleDocument::firstPageId,
+    /**
+     * `page_spec` (JSON del núcleo) con el que se crean las páginas nuevas: hereda
+     * el lienzo del cuaderno (A4 o infinito). Ver [CanvasKind.pageSpecJson].
+     */
+    private val newPageSpecJson: String = CanvasKind.A4.pageSpecJson,
     /** Renderiza la página `index` del documento a su escena. Inyectable para tests sin `org.json`. */
     private val renderScene: (String, Int) -> ScenePage = { documentJson, index ->
         SceneParser.parse(core.documentRenderPage(documentJson, index))
@@ -101,6 +116,11 @@ class DocumentViewModel(
     private val _history = MutableStateFlow(HistoryUiState())
     val history: StateFlow<HistoryUiState> = _history.asStateFlow()
 
+    private val _pages = MutableStateFlow(PageUiState())
+
+    /** Página visible y número total de páginas del documento. */
+    val pages: StateFlow<PageUiState> = _pages.asStateFlow()
+
     private val _export = MutableStateFlow(PdfExportUiState())
     val export: StateFlow<PdfExportUiState> = _export.asStateFlow()
 
@@ -122,6 +142,10 @@ class DocumentViewModel(
 
     @Volatile
     private var pageId: String? = null
+
+    /** Índice (base 0) de la página que la vista está mostrando. */
+    @Volatile
+    private var pageIndex: Int = 0
 
     @Volatile
     private var autosaveJob: Job? = null
@@ -159,8 +183,10 @@ class DocumentViewModel(
                 documentJson = loaded.documentJson
                 pageId = loaded.pageId
             }
+            pageIndex = 0
             historyController.begin(documentJson!!)
             publishHistory()
+            publishPages(documentJson!!)
             renderScene(documentJson!!, 0)
         }.fold(
             onSuccess = { SceneUiState.Ready(it) },
@@ -286,7 +312,7 @@ class DocumentViewModel(
                     val (updated, copies) = parseDuplicate(
                         core.documentDuplicateElements(doc, page, idsJson, offset, offset),
                     )
-                    Triple(updated, copies, renderScene(updated, 0))
+                    Triple(updated, copies, renderScene(updated, pageIndex))
                 }
             }
             result.onSuccess { (updated, copies, scene) ->
@@ -342,6 +368,67 @@ class DocumentViewModel(
 
     /** Rehace la última edición deshecha. */
     fun redo() = navigate { historyController.redo() }
+
+    // -- Páginas ----------------------------------------------------------
+    // El núcleo Rust es la autoridad sobre la estructura del documento; aquí sólo
+    // se orquesta la llamada y se publica la escena y el contador de páginas.
+
+    /**
+     * Añade una página al final del documento -- heredando el lienzo del cuaderno
+     * (A4 o infinito) vía [newPageSpecJson] -- y la deja como página visible. Es
+     * una edición como cualquier otra: entra en el historial y se autoguarda.
+     */
+    fun addPage() {
+        val doc = documentJson ?: return
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.Default) {
+                runCatching {
+                    val updated = core.documentAddPage(doc, newPageSpecJson)
+                    val target = (pageCountOf(updated) - 1).coerceAtLeast(0)
+                    Triple(updated, target, renderScene(updated, target))
+                }
+            }
+            result.onSuccess { (updated, target, scene) ->
+                documentJson = updated
+                pageIndex = target
+                pageId = scene.pageId
+                _selection.value = Selection.Empty
+                _state.value = SceneUiState.Ready(scene)
+                withContext(Dispatchers.Default) { historyController.record(updated) }
+                publishHistory()
+                publishPages(updated)
+                autosave(updated)
+            }
+        }
+    }
+
+    /** Muestra la página [index] (si está en rango). No modifica el documento. */
+    fun goToPage(index: Int) {
+        val doc = documentJson ?: return
+        if (index == pageIndex) return
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.Default) {
+                runCatching {
+                    if (index !in 0 until pageCountOf(doc)) return@runCatching null
+                    index to renderScene(doc, index)
+                }
+            }
+            result.onSuccess { pair ->
+                pair?.let { (target, scene) ->
+                    pageIndex = target
+                    pageId = scene.pageId
+                    _selection.value = Selection.Empty
+                    _state.value = SceneUiState.Ready(scene)
+                    publishPages(doc)
+                }
+            }
+        }
+    }
+
+    private fun publishPages(documentJson: String) {
+        val count = runCatching { pageCountOf(documentJson) }.getOrDefault(1).coerceAtLeast(1)
+        _pages.value = PageUiState(pageIndex.coerceIn(0, count - 1), count)
+    }
 
     /** Fuerza un guardado inmediato del documento activo (p. ej. al pausar la Activity). */
     fun flush() {
@@ -413,11 +500,12 @@ class DocumentViewModel(
             val result = withContext(Dispatchers.Default) {
                 runCatching {
                     val updated = mutate()
-                    updated to renderScene(updated, 0)
+                    updated to renderScene(updated, pageIndex)
                 }
             }
             result.onSuccess { (updated, scene) ->
                 documentJson = updated
+                publishPages(updated)
                 // La selección se reproyecta sobre las cajas de la escena nueva
                 // (o se vacía si sus elementos ya no existen).
                 _selection.value =
@@ -435,15 +523,20 @@ class DocumentViewModel(
             val result = withContext(Dispatchers.Default) {
                 runCatching {
                     val doc = step() ?: return@runCatching null
-                    doc to renderScene(doc, 0)
+                    val count = pageCountOf(doc)
+                    val idx = pageIndex.coerceIn(0, (count - 1).coerceAtLeast(0))
+                    Triple(doc, idx, renderScene(doc, idx))
                 }
             }
-            result.onSuccess { pair ->
-                pair?.let { (doc, scene) ->
+            result.onSuccess { triple ->
+                triple?.let { (doc, idx, scene) ->
                     documentJson = doc
+                    pageIndex = idx
+                    pageId = scene.pageId
                     _selection.value = _selection.value.refreshed(scene.hits)
                     _state.value = SceneUiState.Ready(scene)
                     publishHistory()
+                    publishPages(doc)
                     autosave(doc)
                 }
             }

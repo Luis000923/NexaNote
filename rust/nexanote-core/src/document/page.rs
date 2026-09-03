@@ -250,4 +250,59 @@ mod tests {
             Err(DocumentError::ElementNotFound(_))
         ));
     }
+
+    use crate::document::element::{Shape, ShapeKind};
+
+    fn rect(x: f32, y: f32, w: f32, h: f32) -> ElementKind {
+        ElementKind::Shape(Shape {
+            kind: ShapeKind::Rectangle,
+            bounds: Rect::new(x, y, w, h),
+            stroke_color: Color::BLACK,
+            fill_color: None,
+            stroke_width: 0.0,
+        })
+    }
+
+    #[test]
+    fn content_bounds_is_none_when_empty_and_unions_every_element() {
+        let mut page = Page::new(PageSize::A4, PageTemplate::Blank).unwrap();
+        assert_eq!(page.content_bounds(), None);
+        page.add_element(rect(0.0, 0.0, 10.0, 10.0));
+        page.add_element(rect(90.0, 40.0, 10.0, 20.0));
+        assert_eq!(page.content_bounds(), Some(Rect::new(0.0, 0.0, 100.0, 60.0)));
+    }
+
+    #[test]
+    fn elements_in_takes_only_fully_contained_in_paint_order() {
+        let mut page = Page::new(PageSize::A4, PageTemplate::Blank).unwrap();
+        let inside = page.add_element(rect(10.0, 10.0, 20.0, 20.0));
+        let _straddling = page.add_element(rect(90.0, 90.0, 40.0, 40.0));
+        let _outside = page.add_element(rect(500.0, 500.0, 5.0, 5.0));
+        assert_eq!(page.elements_in(Rect::new(0.0, 0.0, 100.0, 100.0)), vec![inside]);
+        assert!(page.elements_in(Rect::new(0.0, 0.0, 1.0, 1.0)).is_empty());
+    }
+
+    #[test]
+    fn element_at_returns_the_topmost_hit_and_none_on_a_miss() {
+        let mut page = Page::new(PageSize::A4, PageTemplate::Blank).unwrap();
+        let _low = page.add_element(rect(0.0, 0.0, 50.0, 50.0));
+        let high = page.add_element(rect(10.0, 10.0, 50.0, 50.0));
+        assert_eq!(page.element_at(20.0, 20.0, 0.0), Some(high));
+        assert_eq!(page.element_at(500.0, 500.0, 0.0), None);
+        // La tolerancia permite tocar justo fuera de la caja.
+        assert_eq!(page.element_at(-3.0, 20.0, 8.0), Some(_low));
+    }
+
+    #[test]
+    fn duplicate_elements_skips_unknown_ids_and_stacks_copies_on_top() {
+        let mut page = Page::new(PageSize::A4, PageTemplate::Blank).unwrap();
+        let a = page.add_element(rect(0.0, 0.0, 10.0, 10.0));
+        let ghost = ElementId::generate();
+        let created = page.duplicate_elements(&[a, ghost], 5.0, 5.0);
+        assert_eq!(created.len(), 1);
+        assert_ne!(created[0], a);
+        assert_eq!(page.element_count(), 2);
+        let copy = page.element(created[0]).unwrap();
+        assert!(copy.z_index > page.element(a).unwrap().z_index);
+    }
 }

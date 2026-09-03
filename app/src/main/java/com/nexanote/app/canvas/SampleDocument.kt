@@ -116,6 +116,13 @@ object SampleDocument {
     fun pageCount(documentJson: String): Int =
         JSONObject(documentJson).getJSONArray("pages").length()
 
+    /** Id de la página en la posición [index] (acotada al rango válido). */
+    fun pageIdAt(documentJson: String, index: Int): String {
+        val pages = JSONObject(documentJson).getJSONArray("pages")
+        val i = index.coerceIn(0, (pages.length() - 1).coerceAtLeast(0))
+        return pages.getJSONObject(i).getString("id")
+    }
+
     fun buildScene(core: NativeCore, title: String = "Documento de ejemplo"): ScenePage {
         val loaded = buildDocument(core, title)
         return SceneParser.parse(core.documentRenderPage(loaded.documentJson, 0))
