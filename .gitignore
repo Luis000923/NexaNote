@@ -1,0 +1,28 @@
+# Android / Gradle
+*.iml
+.gradle/
+.kotlin/
+/local.properties
+/.idea/
+build/
+/captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.keystore
+
+# Rust
+/rust/target/
+**/*.rs.bk
+
+# Artefactos nativos generados por el build (se recompilan)
+/app/src/main/jniLibs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Archivos de trabajo/planificación (no forman parte del andamiaje)
+/PROMT/
+/contex.md

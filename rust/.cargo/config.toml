@@ -1,0 +1,6 @@
+# Los linkers de Android se inyectan por variables de entorno desde
+# `build-android.sh` (dependen de la ruta del NDK instalado).
+#
+#   CARGO_TARGET_<TARGET>_LINKER = <ndk>/.../<abi><api>-clang
+#
+# Para `cargo test` en el host no se necesita configuración especial.
