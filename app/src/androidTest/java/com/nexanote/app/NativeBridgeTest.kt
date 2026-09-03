@@ -50,6 +50,40 @@ class NativeBridgeTest {
         assertEquals(1, summary.getInt("element_count"))
     }
 
+    @Test
+    fun textBlockIsSanitizedAndPersistedInRust() {
+        var doc = NativeBridge.documentCreate("Texto")
+        val pageId = JSONObject(
+            NativeBridge.documentAddPage(doc, "{}").also { doc = it },
+        ).getJSONArray("pages").getJSONObject(0).getString("id")
+
+        val text = """
+            {"content":"  Hola mundo  ","position":{"x":12.0,"y":24.0},
+             "style":{"font_size":20.0,"bold":true,"italic":false,"underline":false,
+             "color":{"r":0,"g":0,"b":0,"a":255}},"max_width":null}
+        """.trimIndent()
+        doc = NativeBridge.documentAddText(doc, pageId, text)
+
+        val scene = JSONObject(NativeBridge.documentRenderPage(doc, 0))
+        val prim = scene.getJSONArray("primitives").getJSONObject(0)
+        assertEquals("Text", prim.getString("type"))
+        assertEquals("Hola mundo", prim.getString("content"))
+    }
+
+    @Test(expected = IllegalStateException::class)
+    fun emptyTextBlockRaisesInsteadOfCrashing() {
+        var doc = NativeBridge.documentCreate("d")
+        val pageId = JSONObject(
+            NativeBridge.documentAddPage(doc, "{}").also { doc = it },
+        ).getJSONArray("pages").getJSONObject(0).getString("id")
+        val blank = """
+            {"content":"   ","position":{"x":0.0,"y":0.0},
+             "style":{"font_size":16.0,"bold":false,"italic":false,"underline":false,
+             "color":{"r":0,"g":0,"b":0,"a":255}},"max_width":null}
+        """.trimIndent()
+        NativeBridge.documentAddText(doc, pageId, blank)
+    }
+
     @Test(expected = IllegalStateException::class)
     fun invalidPageIdRaisesInsteadOfCrashing() {
         val doc = NativeBridge.documentCreate("d")

@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -52,6 +53,7 @@ fun DocumentCanvas(
     tool: DrawingTool = DrawingTool.Pen,
     onStrokeCommit: (List<StrokeSample>) -> Unit = {},
     onShapeCommit: (ShapeKind, ShapeBounds) -> Unit = { _, _ -> },
+    onTextRequest: (Float, Float) -> Unit = { _, _ -> },
 ) {
     // Trazo / forma en curso (coordenadas del documento). Se conservan pintados
     // hasta que llega la nueva escena del núcleo que ya los incluye: sin parpadeo.
@@ -82,6 +84,12 @@ fun DocumentCanvas(
 
                     shapeKind != null ->
                         captureShape(shapeKind, activeShape, transform, onShapeCommit)
+
+                    tool == DrawingTool.Text ->
+                        detectTapGestures { pos ->
+                            val (mx, my) = transform.screenToModel(pos.x, pos.y)
+                            onTextRequest(mx, my)
+                        }
 
                     else -> Unit // DrawingTool.Pan: sólo navega (transform gestures).
                 }

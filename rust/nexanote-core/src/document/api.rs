@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::element::{ElementKind, Shape, ShapeKind, Stroke};
+use super::element::{ElementKind, Shape, ShapeKind, Stroke, TextBox};
 use super::error::{DocResult, DocumentError};
 use super::model::Document;
 use super::page::{PageSize, PageTemplate};
@@ -194,6 +194,61 @@ fn sanitize_shape(mut shape: Shape) -> DocResult<Shape> {
         shape.stroke_width = MIN_STROKE_WIDTH;
     }
     Ok(shape)
+}
+
+/// Tamaño de fuente mínimo y máximo (unidades lógicas) para un bloque de texto.
+const MIN_FONT_SIZE: f32 = 6.0;
+const MAX_FONT_SIZE: f32 = 512.0;
+
+/// Longitud máxima (en caracteres Unicode) del contenido de un bloque de texto.
+/// Fase 6: bloques limpios y acotados, sin formato enriquecido masivo.
+const MAX_TEXT_LEN: usize = 4096;
+
+/// Inserta un **bloque de texto** en la página `page_id`.
+///
+/// `text_json` es un [`TextBox`] serializado
+/// (`{"content","position":{"x","y"},"style":{"font_size","bold","italic","underline","color"},"max_width"}`).
+/// El núcleo es la única autoridad sobre la validez del bloque y lo **sanea**:
+///
+///  - recorta espacios y exige contenido no vacío (si no, [`DocumentError::InvalidArgument`]);
+///  - trunca el contenido a [`MAX_TEXT_LEN`] caracteres;
+///  - exige una posición finita (si no, [`DocumentError::InvalidArgument`]);
+///  - satura `font_size` a `[MIN_FONT_SIZE, MAX_FONT_SIZE]` (o `16.0` si no es finito);
+///  - descarta `max_width` si no es finito o no es positivo.
+///
+/// Devuelve el documento actualizado.
+pub fn add_text(document_json: &str, page_id: &str, text_json: &str) -> DocResult<String> {
+    let mut doc = Document::from_json(document_json)?;
+    let id = page_id.parse()?;
+    let raw: TextBox = parse(text_json, "text")?;
+    let text = sanitize_text(raw)?;
+    doc.page_mut(id)?.add_element(ElementKind::Text(text));
+    doc.to_json()
+}
+
+/// Aplica las reglas de validez de un bloque de texto. Ver [`add_text`].
+fn sanitize_text(mut text: TextBox) -> DocResult<TextBox> {
+    let trimmed = text.content.trim();
+    if trimmed.is_empty() {
+        return Err(DocumentError::InvalidArgument(
+            "un bloque de texto necesita contenido no vacío".to_string(),
+        ));
+    }
+    text.content = trimmed.chars().take(MAX_TEXT_LEN).collect();
+    if !(text.position.x.is_finite() && text.position.y.is_finite()) {
+        return Err(DocumentError::InvalidArgument(
+            "la posición del texto debe ser finita".to_string(),
+        ));
+    }
+    text.style.font_size = if text.style.font_size.is_finite() {
+        text.style.font_size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
+    } else {
+        16.0
+    };
+    text.max_width = text
+        .max_width
+        .filter(|w| w.is_finite() && *w > 0.0);
+    Ok(text)
 }
 
 /// Elimina el elemento `element_id` de la página `page_id`. Devuelve el documento
@@ -482,6 +537,64 @@ mod tests {
             sanitize_shape(shape),
             Err(DocumentError::InvalidArgument(_))
         ));
+    }
+
+    #[test]
+    fn add_text_inserts_block_and_trims_content() {
+        let (doc, page_id) = doc_with_blank_page();
+        let text = r#"{"content":"  Hola mundo  ","position":{"x":12.0,"y":24.0},
+            "style":{"font_size":20.0,"bold":true,"italic":false,"underline":false,
+            "color":{"r":0,"g":0,"b":0,"a":255}},"max_width":null}"#;
+        let doc = add_text(&doc, &page_id, text).unwrap();
+
+        let parsed = Document::from_json(&doc).unwrap();
+        match &parsed.pages[0].elements[0].kind {
+            ElementKind::Text(t) => {
+                assert_eq!(t.content, "Hola mundo");
+                assert_eq!((t.position.x, t.position.y), (12.0, 24.0));
+                assert_eq!(t.style.font_size, 20.0);
+                assert!(t.style.bold);
+            }
+            other => panic!("esperaba Text, no {other:?}"),
+        }
+    }
+
+    #[test]
+    fn add_text_rejects_empty_content() {
+        let (doc, page_id) = doc_with_blank_page();
+        let text = r#"{"content":"   ","position":{"x":0.0,"y":0.0},
+            "style":{"font_size":16.0,"bold":false,"italic":false,"underline":false,
+            "color":{"r":0,"g":0,"b":0,"a":255}},"max_width":null}"#;
+        assert!(matches!(
+            add_text(&doc, &page_id, text),
+            Err(DocumentError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn add_text_clamps_font_size_and_drops_bad_max_width() {
+        let (doc, page_id) = doc_with_blank_page();
+        let text = r#"{"content":"x","position":{"x":1.0,"y":2.0},
+            "style":{"font_size":0.5,"bold":false,"italic":false,"underline":false,
+            "color":{"r":0,"g":0,"b":0,"a":255}},"max_width":-3.0}"#;
+        let doc = add_text(&doc, &page_id, text).unwrap();
+        let parsed = Document::from_json(&doc).unwrap();
+        if let ElementKind::Text(t) = &parsed.pages[0].elements[0].kind {
+            assert_eq!(t.style.font_size, MIN_FONT_SIZE);
+            assert_eq!(t.max_width, None);
+        } else {
+            panic!("esperaba Text");
+        }
+    }
+
+    #[test]
+    fn add_text_to_missing_page_errors() {
+        let (doc, _) = doc_with_blank_page();
+        let text = r#"{"content":"x","position":{"x":0.0,"y":0.0},
+            "style":{"font_size":16.0,"bold":false,"italic":false,"underline":false,
+            "color":{"r":0,"g":0,"b":0,"a":255}},"max_width":null}"#;
+        let err = add_text(&doc, "00000000000000000000000000000009", text).unwrap_err();
+        assert!(matches!(err, DocumentError::PageNotFound(_)));
     }
 
     #[test]

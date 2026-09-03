@@ -5,14 +5,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -69,6 +72,10 @@ fun DocumentScreen(viewModel: DocumentViewModel = viewModel()) {
                         )
                     }
                     var tool by remember { mutableStateOf(DrawingTool.Pen) }
+                    // Posición (coords del documento) de un bloque de texto pendiente de escribir.
+                    var pendingText by remember(s.scene.pageId) {
+                        mutableStateOf<Pair<Float, Float>?>(null)
+                    }
                     DocumentCanvas(
                         scene = s.scene,
                         transform = transform,
@@ -76,8 +83,18 @@ fun DocumentScreen(viewModel: DocumentViewModel = viewModel()) {
                         tool = tool,
                         onStrokeCommit = viewModel::commitStroke,
                         onShapeCommit = viewModel::commitShape,
+                        onTextRequest = { x, y -> pendingText = x to y },
                         modifier = Modifier.fillMaxSize(),
                     )
+                    pendingText?.let { (x, y) ->
+                        TextEntryDialog(
+                            onDismiss = { pendingText = null },
+                            onConfirm = { content ->
+                                viewModel.commitText(x, y, content)
+                                pendingText = null
+                            },
+                        )
+                    }
                     ToolPalette(
                         modifier = Modifier
                             .align(Alignment.BottomStart)
@@ -111,8 +128,39 @@ private val TOOLS: List<Pair<DrawingTool, Pair<ImageVector, String>>> = listOf(
     DrawingTool.Rectangle to (NexaIcons.ShapeRectangle to "Rectángulo"),
     DrawingTool.Ellipse to (NexaIcons.ShapeEllipse to "Elipse"),
     DrawingTool.Arrow to (NexaIcons.ShapeArrow to "Flecha"),
+    DrawingTool.Text to (NexaIcons.TextTool to "Texto"),
     DrawingTool.Pan to (NexaIcons.Hand to "Navegación"),
 )
+
+/** Diálogo de entrada del contenido de un bloque de texto (teclado virtual). */
+@Composable
+private fun TextEntryDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var content by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Nuevo bloque de texto") },
+        text = {
+            OutlinedTextField(
+                value = content,
+                onValueChange = { content = it.take(4096) },
+                label = { Text("Contenido") },
+                singleLine = false,
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(content) },
+                enabled = content.isNotBlank(),
+            ) { Text("Añadir") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
+        },
+    )
+}
 
 @Composable
 private fun ToolPalette(

@@ -53,6 +53,12 @@ object NativeBridge : NativeCore {
         shapeJson: String,
     ): String
 
+    external override fun documentAddText(
+        documentJson: String,
+        pageId: String,
+        textJson: String,
+    ): String
+
     external override fun documentRemoveElement(
         documentJson: String,
         pageId: String,
@@ -115,6 +121,15 @@ interface NativeCore {
      * actualizado.
      */
     fun documentAddShape(documentJson: String, pageId: String, shapeJson: String): String
+
+    /**
+     * Inserta un **bloque de texto** tipográfico en la página [pageId]. [textJson]
+     * es un `TextBox` serializado
+     * (`{"content","position":{"x","y"},"style":{"font_size","bold","italic","underline","color":{...}},"max_width":null}`).
+     * El núcleo Rust recorta el contenido, lo rechaza si queda vacío, satura el
+     * tamaño de fuente y valida la posición. Devuelve el documento actualizado.
+     */
+    fun documentAddText(documentJson: String, pageId: String, textJson: String): String
 
     /** Elimina el elemento [elementId] de la página [pageId]. */
     fun documentRemoveElement(documentJson: String, pageId: String, elementId: String): String

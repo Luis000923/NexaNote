@@ -167,6 +167,25 @@ pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentAddShape<'loc
     run_api(&mut env, api::add_shape(&doc, &page_id, &shape))
 }
 
+/// `external fun documentAddText(documentJson: String, pageId: String, textJson: String): String`
+///
+/// Inserta un bloque de texto tipográfico en la página dada. El núcleo recorta el
+/// contenido, exige que no quede vacío, satura el tamaño de fuente y valida la
+/// posición antes de persistirlo.
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentAddText<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    document_json: JString<'local>,
+    page_id: JString<'local>,
+    text_json: JString<'local>,
+) -> jstring {
+    let doc = read_string(&mut env, &document_json);
+    let page_id = read_string(&mut env, &page_id);
+    let text = read_string(&mut env, &text_json);
+    run_api(&mut env, api::add_text(&doc, &page_id, &text))
+}
+
 /// `external fun documentRemoveElement(documentJson: String, pageId: String, elementId: String): String`
 #[no_mangle]
 pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentRemoveElement<'local>(

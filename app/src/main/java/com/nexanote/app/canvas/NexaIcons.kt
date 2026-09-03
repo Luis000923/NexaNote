@@ -241,6 +241,21 @@ object NexaIcons {
         }
     }
 
+    /** Herramienta de texto: la letra "T" (barra superior y asta). */
+    val TextTool: ImageVector by lazy {
+        vector("nexa_text_tool") {
+            moveTo(4f, 4f)
+            lineTo(20f, 4f)
+            lineTo(20f, 7.5f)
+            lineTo(13.75f, 7.5f)
+            lineTo(13.75f, 20f)
+            lineTo(10.25f, 20f)
+            lineTo(10.25f, 7.5f)
+            lineTo(4f, 7.5f)
+            close()
+        }
+    }
+
     val Refresh: ImageVector by lazy {
         vector("nexa_refresh") {
             moveTo(17.65f, 6.35f)

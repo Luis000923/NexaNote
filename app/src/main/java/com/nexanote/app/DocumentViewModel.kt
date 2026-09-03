@@ -11,6 +11,7 @@ import com.nexanote.app.canvas.ShapeKind
 import com.nexanote.app.canvas.StrokeColor
 import com.nexanote.app.canvas.StrokeGesture
 import com.nexanote.app.canvas.StrokeSample
+import com.nexanote.app.canvas.TextInput
 import com.nexanote.core.NativeBridge
 import com.nexanote.core.NativeCore
 import kotlinx.coroutines.Dispatchers
@@ -118,6 +119,30 @@ class DocumentViewModel(
                 runCatching {
                     val shapeJson = ShapeGeometry.toShapeJson(kind, bounds)
                     val updated = core.documentAddShape(doc, page, shapeJson)
+                    updated to SceneParser.parse(core.documentRenderPage(updated, 0))
+                }
+            }.onSuccess { (updated, scene) ->
+                documentJson = updated
+                _state.value = SceneUiState.Ready(scene)
+            }
+        }
+    }
+
+    /**
+     * Persiste un bloque de texto creado en el lienzo. `(x, y)` es la línea base
+     * del texto en coordenadas del documento. Como [commitStroke], la
+     * serialización y la llamada FFI van fuera del hilo principal; el contenido
+     * en blanco se ignora y un fallo del núcleo deja la escena actual intacta.
+     */
+    fun commitText(x: Float, y: Float, content: String) {
+        if (!TextInput.isCommittable(content)) return
+        val doc = documentJson ?: return
+        val page = pageId ?: return
+        viewModelScope.launch {
+            withContext(Dispatchers.Default) {
+                runCatching {
+                    val textJson = TextInput.toTextJson(content, x, y)
+                    val updated = core.documentAddText(doc, page, textJson)
                     updated to SceneParser.parse(core.documentRenderPage(updated, 0))
                 }
             }.onSuccess { (updated, scene) ->
