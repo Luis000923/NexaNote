@@ -59,6 +59,12 @@ object NativeBridge : NativeCore {
         textJson: String,
     ): String
 
+    external override fun documentAddFormula(
+        documentJson: String,
+        pageId: String,
+        formulaJson: String,
+    ): String
+
     external override fun documentRemoveElement(
         documentJson: String,
         pageId: String,
@@ -130,6 +136,15 @@ interface NativeCore {
      * tamaño de fuente y valida la posición. Devuelve el documento actualizado.
      */
     fun documentAddText(documentJson: String, pageId: String, textJson: String): String
+
+    /**
+     * Inserta una **fórmula matemática estructurada** en la página [pageId].
+     * [formulaJson] es `{"expression":"\\frac{a}{b}","position":{"x":..,"y":..}}`.
+     * El núcleo Rust parsea la expresión a un AST tipado (fracciones, potencias,
+     * raíces, sumatorias, funciones); un fallo de sintaxis se lanza como
+     * [IllegalStateException]. Devuelve el documento actualizado.
+     */
+    fun documentAddFormula(documentJson: String, pageId: String, formulaJson: String): String
 
     /** Elimina el elemento [elementId] de la página [pageId]. */
     fun documentRemoveElement(documentJson: String, pageId: String, elementId: String): String

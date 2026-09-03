@@ -2,6 +2,7 @@ package com.nexanote.app
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nexanote.app.canvas.FormulaInput
 import com.nexanote.app.canvas.SampleDocument
 import com.nexanote.app.canvas.SceneParser
 import com.nexanote.app.canvas.ScenePage
@@ -143,6 +144,30 @@ class DocumentViewModel(
                 runCatching {
                     val textJson = TextInput.toTextJson(content, x, y)
                     val updated = core.documentAddText(doc, page, textJson)
+                    updated to SceneParser.parse(core.documentRenderPage(updated, 0))
+                }
+            }.onSuccess { (updated, scene) ->
+                documentJson = updated
+                _state.value = SceneUiState.Ready(scene)
+            }
+        }
+    }
+
+    /**
+     * Persiste una fórmula matemática creada en el lienzo. `(x, y)` es la línea
+     * base en coordenadas del documento. Como [commitStroke], la serialización y
+     * la llamada FFI van fuera del hilo principal; la expresión en blanco se
+     * ignora y un fallo del núcleo (sintaxis inválida) deja la escena intacta.
+     */
+    fun commitFormula(x: Float, y: Float, expression: String) {
+        if (!FormulaInput.isCommittable(expression)) return
+        val doc = documentJson ?: return
+        val page = pageId ?: return
+        viewModelScope.launch {
+            withContext(Dispatchers.Default) {
+                runCatching {
+                    val formulaJson = FormulaInput.toFormulaJson(expression, x, y)
+                    val updated = core.documentAddFormula(doc, page, formulaJson)
                     updated to SceneParser.parse(core.documentRenderPage(updated, 0))
                 }
             }.onSuccess { (updated, scene) ->

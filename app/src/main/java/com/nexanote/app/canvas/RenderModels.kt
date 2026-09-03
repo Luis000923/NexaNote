@@ -79,5 +79,7 @@ sealed interface ScenePrimitive {
         val origin: Offset,
         val latex: String,
         val color: Color,
+        /** Valor numérico si la expresión es cerrada (sin símbolos libres); si no, `null`. */
+        val value: Double? = null,
     ) : ScenePrimitive
 }

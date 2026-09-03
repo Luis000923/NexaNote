@@ -17,15 +17,17 @@ pub mod element;
 pub mod error;
 pub mod geometry;
 pub mod id;
+pub mod math;
 pub mod model;
 pub mod page;
 pub mod render;
 
 pub use element::{
-    BinaryOp, Element, ElementKind, Formula, FormulaNode, Shape, ShapeKind, Stroke, StrokePoint,
-    TextBox, TextStyle,
+    BinaryOp, Element, ElementKind, Formula, FormulaNode, MathFunc, Shape, ShapeKind, Stroke,
+    StrokePoint, TextBox, TextStyle,
 };
 pub use error::{DocResult, DocumentError};
+pub use math::{MathError, MathResult};
 pub use geometry::{Color, Point, Rect, Transformable};
 pub use id::{DocumentId, ElementId, Id, PageId};
 pub use model::{Document, DocumentMetadata, SCHEMA_VERSION};

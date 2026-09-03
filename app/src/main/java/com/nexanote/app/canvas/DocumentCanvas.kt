@@ -54,6 +54,7 @@ fun DocumentCanvas(
     onStrokeCommit: (List<StrokeSample>) -> Unit = {},
     onShapeCommit: (ShapeKind, ShapeBounds) -> Unit = { _, _ -> },
     onTextRequest: (Float, Float) -> Unit = { _, _ -> },
+    onFormulaRequest: (Float, Float) -> Unit = { _, _ -> },
 ) {
     // Trazo / forma en curso (coordenadas del documento). Se conservan pintados
     // hasta que llega la nueva escena del núcleo que ya los incluye: sin parpadeo.
@@ -89,6 +90,12 @@ fun DocumentCanvas(
                         detectTapGestures { pos ->
                             val (mx, my) = transform.screenToModel(pos.x, pos.y)
                             onTextRequest(mx, my)
+                        }
+
+                    tool == DrawingTool.Formula ->
+                        detectTapGestures { pos ->
+                            val (mx, my) = transform.screenToModel(pos.x, pos.y)
+                            onFormulaRequest(mx, my)
                         }
 
                     else -> Unit // DrawingTool.Pan: sólo navega (transform gestures).
@@ -404,9 +411,10 @@ private fun DrawScope.drawPrimitive(p: ScenePrimitive) {
             p.content, p.origin, p.fontSize, p.color, p.bold, p.italic, p.underline,
         )
 
-        is ScenePrimitive.Formula -> drawNativeText(
-            p.latex, p.origin, 18f, p.color, bold = false, italic = true, underline = false,
-        )
+        is ScenePrimitive.Formula -> {
+            val text = p.value?.let { "${p.latex} = ${formatValue(it)}" } ?: p.latex
+            drawNativeText(text, p.origin, 18f, p.color, bold = false, italic = true, underline = false)
+        }
     }
 }
 
@@ -429,6 +437,10 @@ private fun DrawScope.drawNativeText(
     // `origin.y` es la línea base del texto, consistente con el modelo.
     drawContext.canvas.nativeCanvas.drawText(text, origin.x, origin.y, paint)
 }
+
+/** Presenta el valor de una fórmula: entero si es exacto, si no con 4 decimales. */
+private fun formatValue(v: Double): String =
+    if (v == v.toLong().toDouble()) v.toLong().toString() else "%.4f".format(v)
 
 private fun Color.toArgb(): Int = android.graphics.Color.argb(
     (alpha * 255f).toInt(), (red * 255f).toInt(), (green * 255f).toInt(), (blue * 255f).toInt(),

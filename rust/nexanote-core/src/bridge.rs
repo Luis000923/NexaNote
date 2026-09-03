@@ -186,6 +186,25 @@ pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentAddText<'loca
     run_api(&mut env, api::add_text(&doc, &page_id, &text))
 }
 
+/// `external fun documentAddFormula(documentJson: String, pageId: String, formulaJson: String): String`
+///
+/// Inserta una fórmula matemática estructurada en la página dada. El núcleo
+/// parsea la expresión a un AST tipado con el motor matemático; un fallo de
+/// sintaxis se propaga como IllegalStateException, nunca como `panic`.
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentAddFormula<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    document_json: JString<'local>,
+    page_id: JString<'local>,
+    formula_json: JString<'local>,
+) -> jstring {
+    let doc = read_string(&mut env, &document_json);
+    let page_id = read_string(&mut env, &page_id);
+    let formula = read_string(&mut env, &formula_json);
+    run_api(&mut env, api::add_formula(&doc, &page_id, &formula))
+}
+
 /// `external fun documentRemoveElement(documentJson: String, pageId: String, elementId: String): String`
 #[no_mangle]
 pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentRemoveElement<'local>(

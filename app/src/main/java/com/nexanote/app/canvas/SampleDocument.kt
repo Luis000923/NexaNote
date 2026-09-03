@@ -47,8 +47,12 @@ object SampleDocument {
         """{"type":"Text","content":"NexaNote - Fase 3","position":{"x":80.0,"y":95.0},
             "style":{"font_size":22.0,"bold":true,"italic":false,"underline":false,
             "color":{"r":33,"g":33,"b":33,"a":255}},"max_width":null}""",
-        // Formula (fuente LaTeX).
-        """{"type":"Formula","latex":"e^{i\\pi} + 1 = 0","position":{"x":150.0,"y":175.0},"ast":null}""",
+    )
+
+    /** Fórmulas de ejemplo `(expresión, x, y)`, insertadas vía el motor matemático. */
+    private val FORMULAS: List<Triple<String, Float, Float>> = listOf(
+        Triple("\\frac{-b + \\sqrt{b^2 - 4 a c}}{2 a}", 150f, 175f),
+        Triple("\\sum_{i=1}^{10} i", 150f, 210f),
     )
 
     /** Documento de ejemplo ya construido en el núcleo: su JSON y el id de su página. */
@@ -65,6 +69,9 @@ object SampleDocument {
         val pageId = JSONObject(doc).getJSONArray("pages").getJSONObject(0).getString("id")
         for (element in ELEMENTS) {
             doc = core.documentAddElement(doc, pageId, element)
+        }
+        for ((expression, x, y) in FORMULAS) {
+            doc = core.documentAddFormula(doc, pageId, FormulaInput.toFormulaJson(expression, x, y))
         }
         return LoadedDocument(doc, pageId)
     }

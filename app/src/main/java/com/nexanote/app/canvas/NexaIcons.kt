@@ -256,6 +256,31 @@ object NexaIcons {
         }
     }
 
+    /** Herramienta de fórmulas matemáticas: sumatoria griega (sigma mayúscula). */
+    val Formula: ImageVector by lazy {
+        vector("nexa_formula", PathFillType.EvenOdd) {
+            // Contorno exterior de la sigma.
+            moveTo(6f, 4f)
+            lineTo(18f, 4f)
+            lineTo(18f, 7.5f)
+            lineTo(16.5f, 7.5f)
+            lineTo(16.5f, 6f)
+            lineTo(9.5f, 6f)
+            lineTo(14.5f, 11.4f)
+            lineTo(14.5f, 12.6f)
+            lineTo(9.5f, 18f)
+            lineTo(16.5f, 18f)
+            lineTo(16.5f, 16.5f)
+            lineTo(18f, 16.5f)
+            lineTo(18f, 20f)
+            lineTo(6f, 20f)
+            lineTo(6f, 18.8f)
+            lineTo(11.7f, 12f)
+            lineTo(6f, 5.2f)
+            close()
+        }
+    }
+
     val Refresh: ImageVector by lazy {
         vector("nexa_refresh") {
             moveTo(17.65f, 6.35f)

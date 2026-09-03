@@ -98,6 +98,7 @@ object SceneParser {
             origin = Offset(o.f("x"), o.f("y")),
             latex = o.getString("latex"),
             color = color(o.getJSONObject("color")),
+            value = if (o.isNull("value")) null else o.getDouble("value"),
         )
 
         else -> throw IllegalArgumentException("primitiva desconocida: $type")

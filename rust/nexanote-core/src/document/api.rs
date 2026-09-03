@@ -7,8 +7,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::element::{ElementKind, Shape, ShapeKind, Stroke, TextBox};
+use super::element::{ElementKind, Formula, Shape, ShapeKind, Stroke, TextBox};
 use super::error::{DocResult, DocumentError};
+use super::geometry::Point;
+use super::math;
 use super::model::Document;
 use super::page::{PageSize, PageTemplate};
 
@@ -249,6 +251,66 @@ fn sanitize_text(mut text: TextBox) -> DocResult<TextBox> {
         .max_width
         .filter(|w| w.is_finite() && *w > 0.0);
     Ok(text)
+}
+
+/// Longitud máxima (caracteres Unicode) de la fuente de una fórmula.
+const MAX_FORMULA_LEN: usize = 2048;
+
+/// Especificación de entrada para insertar una fórmula: expresión + posición.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FormulaSpec {
+    /// Expresión matemática en dialecto ASCII/LaTeX (ver [`math`]).
+    expression: String,
+    position: Point,
+}
+
+/// Inserta una **fórmula matemática estructurada** en la página `page_id`.
+///
+/// `formula_json` es un [`FormulaSpec`] serializado
+/// (`{"expression":"\\frac{a}{b}","position":{"x":..,"y":..}}`). El núcleo:
+///
+///  - recorta la expresión y exige que no quede vacía ni supere
+///    [`MAX_FORMULA_LEN`] caracteres;
+///  - exige una posición finita;
+///  - **parsea** la expresión a un AST tipado ([`FormulaNode`](super::element::FormulaNode))
+///    con el motor matemático; un fallo léxico o sintáctico se devuelve como
+///    [`DocumentError::InvalidArgument`] (nunca `panic`).
+///
+/// La fórmula se persiste con su fuente original y su AST. Devuelve el documento
+/// actualizado.
+pub fn add_formula(document_json: &str, page_id: &str, formula_json: &str) -> DocResult<String> {
+    let mut doc = Document::from_json(document_json)?;
+    let id = page_id.parse()?;
+    let spec: FormulaSpec = parse(formula_json, "formula")?;
+
+    let expression = spec.expression.trim();
+    if expression.is_empty() {
+        return Err(DocumentError::InvalidArgument(
+            "una fórmula necesita una expresión no vacía".to_string(),
+        ));
+    }
+    if expression.chars().count() > MAX_FORMULA_LEN {
+        return Err(DocumentError::InvalidArgument(format!(
+            "la expresión supera {MAX_FORMULA_LEN} caracteres"
+        )));
+    }
+    if !(spec.position.x.is_finite() && spec.position.y.is_finite()) {
+        return Err(DocumentError::InvalidArgument(
+            "la posición de la fórmula debe ser finita".to_string(),
+        ));
+    }
+
+    let ast = math::parse(expression)
+        .map_err(|e| DocumentError::InvalidArgument(format!("fórmula inválida: {e}")))?;
+
+    let formula = Formula {
+        latex: expression.to_string(),
+        position: spec.position,
+        ast: Some(ast),
+    };
+    doc.page_mut(id)?.add_element(ElementKind::Formula(formula));
+    doc.to_json()
 }
 
 /// Elimina el elemento `element_id` de la página `page_id`. Devuelve el documento
@@ -594,6 +656,67 @@ mod tests {
             "style":{"font_size":16.0,"bold":false,"italic":false,"underline":false,
             "color":{"r":0,"g":0,"b":0,"a":255}},"max_width":null}"#;
         let err = add_text(&doc, "00000000000000000000000000000009", text).unwrap_err();
+        assert!(matches!(err, DocumentError::PageNotFound(_)));
+    }
+
+    #[test]
+    fn add_formula_parses_expression_into_ast() {
+        let (doc, page_id) = doc_with_blank_page();
+        let spec = r#"{"expression":"\\frac{a}{b} + 1","position":{"x":10.0,"y":20.0}}"#;
+        let doc = add_formula(&doc, &page_id, spec).unwrap();
+
+        let parsed = Document::from_json(&doc).unwrap();
+        match &parsed.pages[0].elements[0].kind {
+            ElementKind::Formula(f) => {
+                assert_eq!(f.latex, r"\frac{a}{b} + 1");
+                assert_eq!((f.position.x, f.position.y), (10.0, 20.0));
+                assert!(f.ast.is_some(), "el AST debe haberse construido");
+            }
+            other => panic!("esperaba Formula, no {other:?}"),
+        }
+    }
+
+    #[test]
+    fn add_formula_rejects_bad_syntax_without_panic() {
+        let (doc, page_id) = doc_with_blank_page();
+        let spec = r#"{"expression":"1 + + )","position":{"x":0.0,"y":0.0}}"#;
+        assert!(matches!(
+            add_formula(&doc, &page_id, spec),
+            Err(DocumentError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn add_formula_rejects_empty_and_non_finite_position() {
+        let (doc, page_id) = doc_with_blank_page();
+        let empty = r#"{"expression":"   ","position":{"x":0.0,"y":0.0}}"#;
+        assert!(matches!(
+            add_formula(&doc, &page_id, empty),
+            Err(DocumentError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn add_formula_ast_roundtrips_and_evaluates() {
+        use std::collections::HashMap;
+        let (doc, page_id) = doc_with_blank_page();
+        let spec = r#"{"expression":"2^{10}","position":{"x":1.0,"y":2.0}}"#;
+        let doc = add_formula(&doc, &page_id, spec).unwrap();
+        let parsed = Document::from_json(&doc).unwrap();
+        if let ElementKind::Formula(f) = &parsed.pages[0].elements[0].kind {
+            let ast = f.ast.as_ref().unwrap();
+            let value = math::evaluate(ast, &HashMap::new()).unwrap();
+            assert_eq!(value, 1024.0);
+        } else {
+            panic!("esperaba Formula");
+        }
+    }
+
+    #[test]
+    fn add_formula_to_missing_page_errors() {
+        let (doc, _) = doc_with_blank_page();
+        let spec = r#"{"expression":"1+1","position":{"x":0.0,"y":0.0}}"#;
+        let err = add_formula(&doc, "00000000000000000000000000000009", spec).unwrap_err();
         assert!(matches!(err, DocumentError::PageNotFound(_)));
     }
 

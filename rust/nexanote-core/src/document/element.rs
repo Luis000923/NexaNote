@@ -59,13 +59,17 @@ pub struct TextBox {
     pub max_width: Option<f32>,
 }
 
-/// Nodo de una expresión matemática (representación estructurada **preliminar**).
+/// Nodo del **Árbol Sintáctico Abstracto** de una expresión matemática.
 ///
-/// Suficiente para árboles simples; se ampliará en la fase de motor matemático.
+/// Lo produce el parser del motor matemático ([`crate::document::math`]) y es
+/// evaluable y (de)serializable. Es la representación formal: nunca se manipula la
+/// fórmula como texto una vez parseada.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "node", content = "value")]
 pub enum FormulaNode {
+    /// Literal numérico.
     Number(f64),
+    /// Símbolo: variable (`x`) o constante conocida (`pi`, `e`).
     Symbol(String),
     /// Operación binaria `op` sobre dos subárboles.
     Binary {
@@ -73,14 +77,36 @@ pub enum FormulaNode {
         lhs: Box<FormulaNode>,
         rhs: Box<FormulaNode>,
     },
-    /// Fracción `numerator / denominator`.
+    /// Fracción `numerator / denominator` (equivalente a `Binary { Div, .. }`,
+    /// preservada como nodo propio por su semántica de presentación).
     Fraction {
         numerator: Box<FormulaNode>,
         denominator: Box<FormulaNode>,
     },
+    /// Negación unaria `-operand`.
+    Neg(Box<FormulaNode>),
+    /// Raíz cuadrada `sqrt(radicand)`.
+    Sqrt(Box<FormulaNode>),
+    /// Raíz de índice arbitrario: `radicand ^ (1 / degree)`.
+    Root {
+        degree: Box<FormulaNode>,
+        radicand: Box<FormulaNode>,
+    },
+    /// Sumatoria `sum_{var = from}^{to} body`.
+    Sum {
+        var: String,
+        from: Box<FormulaNode>,
+        to: Box<FormulaNode>,
+        body: Box<FormulaNode>,
+    },
+    /// Llamada a función de una variable (`sin(x)`, `ln(x)`, ...).
+    Call {
+        func: MathFunc,
+        arg: Box<FormulaNode>,
+    },
 }
 
-/// Operadores binarios soportados en la representación preliminar.
+/// Operadores binarios soportados por el AST.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BinaryOp {
     Add,
@@ -88,6 +114,22 @@ pub enum BinaryOp {
     Mul,
     Div,
     Pow,
+}
+
+/// Funciones matemáticas de una variable reconocidas por el parser y el evaluador.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MathFunc {
+    Sin,
+    Cos,
+    Tan,
+    /// Logaritmo natural.
+    Ln,
+    /// Logaritmo en base 10.
+    Log,
+    /// Exponencial `e^x`.
+    Exp,
+    /// Valor absoluto.
+    Abs,
 }
 
 /// Fórmula matemática: fuente LaTeX + AST preliminar opcional.

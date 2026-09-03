@@ -12,7 +12,7 @@ package com.nexanote.app.canvas
  *  - [Text]: una pulsación simple fija la posición de un bloque de texto y abre
  *    un campo para escribir su contenido con el teclado virtual.
  */
-enum class DrawingTool { Pen, Pan, Line, Rectangle, Ellipse, Arrow, Text }
+enum class DrawingTool { Pen, Pan, Line, Rectangle, Ellipse, Arrow, Text, Formula }
 
 /** Color RGBA de un trazo, en el mismo formato que espera el núcleo Rust. */
 data class StrokeColor(val r: Int, val g: Int, val b: Int, val a: Int = 255) {

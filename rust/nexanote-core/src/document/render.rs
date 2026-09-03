@@ -96,12 +96,15 @@ pub enum ScenePrimitive {
         italic: bool,
         underline: bool,
     },
-    /// Fórmula: por ahora se entrega la fuente LaTeX para pintarla como texto.
+    /// Fórmula: se entrega la fuente para pintarla y, si el AST se evalúa sin
+    /// símbolos libres, su valor numérico (`value`), que la UI muestra como
+    /// `fuente = valor`.
     Formula {
         x: f32,
         y: f32,
         latex: String,
         color: Color,
+        value: Option<f64>,
     },
 }
 
@@ -156,6 +159,12 @@ fn element_to_primitive(el: &Element) -> ScenePrimitive {
             y: f.position.y,
             latex: f.latex.clone(),
             color: Color::BLACK,
+            // El AST se evalúa sin variables: sólo hay valor si la expresión es
+            // cerrada (constantes y operaciones, sin símbolos libres).
+            value: f
+                .ast
+                .as_ref()
+                .and_then(|ast| super::math::evaluate(ast, &std::collections::HashMap::new()).ok()),
         },
         ElementKind::Shape(sh) => {
             let b = sh.bounds;
@@ -313,6 +322,34 @@ mod tests {
                 assert_eq!((x1, y1, x2, y2), (3.0, 4.0, 13.0, 24.0));
             }
             ref other => panic!("esperaba Line, no {other:?}"),
+        }
+    }
+
+    #[test]
+    fn formula_primitive_carries_source_and_closed_form_value() {
+        let (doc, page_id) = doc_with_grid_page();
+        let spec = r#"{"expression":"2 * (3 + 4)","position":{"x":5.0,"y":6.0}}"#;
+        let doc = api::add_formula(&doc, &page_id, spec).unwrap();
+        let scene = build_scene(&doc, 0).unwrap();
+        match &scene.primitives[0] {
+            ScenePrimitive::Formula { x, y, latex, value, .. } => {
+                assert_eq!((*x, *y), (5.0, 6.0));
+                assert_eq!(latex, "2 * (3 + 4)");
+                assert_eq!(*value, Some(14.0));
+            }
+            other => panic!("esperaba Formula, no {other:?}"),
+        }
+    }
+
+    #[test]
+    fn formula_with_free_symbol_has_no_value() {
+        let (doc, page_id) = doc_with_grid_page();
+        let spec = r#"{"expression":"x + 1","position":{"x":0.0,"y":0.0}}"#;
+        let doc = api::add_formula(&doc, &page_id, spec).unwrap();
+        let scene = build_scene(&doc, 0).unwrap();
+        match &scene.primitives[0] {
+            ScenePrimitive::Formula { value, .. } => assert_eq!(*value, None),
+            other => panic!("esperaba Formula, no {other:?}"),
         }
     }
 

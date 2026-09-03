@@ -76,6 +76,10 @@ fun DocumentScreen(viewModel: DocumentViewModel = viewModel()) {
                     var pendingText by remember(s.scene.pageId) {
                         mutableStateOf<Pair<Float, Float>?>(null)
                     }
+                    // Posición (coords del documento) de una fórmula pendiente de escribir.
+                    var pendingFormula by remember(s.scene.pageId) {
+                        mutableStateOf<Pair<Float, Float>?>(null)
+                    }
                     DocumentCanvas(
                         scene = s.scene,
                         transform = transform,
@@ -84,14 +88,28 @@ fun DocumentScreen(viewModel: DocumentViewModel = viewModel()) {
                         onStrokeCommit = viewModel::commitStroke,
                         onShapeCommit = viewModel::commitShape,
                         onTextRequest = { x, y -> pendingText = x to y },
+                        onFormulaRequest = { x, y -> pendingFormula = x to y },
                         modifier = Modifier.fillMaxSize(),
                     )
                     pendingText?.let { (x, y) ->
-                        TextEntryDialog(
+                        EntryDialog(
+                            title = "Nuevo bloque de texto",
+                            label = "Contenido",
                             onDismiss = { pendingText = null },
                             onConfirm = { content ->
                                 viewModel.commitText(x, y, content)
                                 pendingText = null
+                            },
+                        )
+                    }
+                    pendingFormula?.let { (x, y) ->
+                        EntryDialog(
+                            title = "Nueva fórmula matemática",
+                            label = "Expresión (p. ej. \\frac{a}{b} + \\sqrt{x})",
+                            onDismiss = { pendingFormula = null },
+                            onConfirm = { expression ->
+                                viewModel.commitFormula(x, y, expression)
+                                pendingFormula = null
                             },
                         )
                     }
@@ -129,24 +147,27 @@ private val TOOLS: List<Pair<DrawingTool, Pair<ImageVector, String>>> = listOf(
     DrawingTool.Ellipse to (NexaIcons.ShapeEllipse to "Elipse"),
     DrawingTool.Arrow to (NexaIcons.ShapeArrow to "Flecha"),
     DrawingTool.Text to (NexaIcons.TextTool to "Texto"),
+    DrawingTool.Formula to (NexaIcons.Formula to "Fórmula matemática"),
     DrawingTool.Pan to (NexaIcons.Hand to "Navegación"),
 )
 
-/** Diálogo de entrada del contenido de un bloque de texto (teclado virtual). */
+/** Diálogo de entrada de una sola línea/párrafo (bloque de texto o fórmula). */
 @Composable
-private fun TextEntryDialog(
+private fun EntryDialog(
+    title: String,
+    label: String,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
     var content by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Nuevo bloque de texto") },
+        title = { Text(title) },
         text = {
             OutlinedTextField(
                 value = content,
                 onValueChange = { content = it.take(4096) },
-                label = { Text("Contenido") },
+                label = { Text(label) },
                 singleLine = false,
             )
         },

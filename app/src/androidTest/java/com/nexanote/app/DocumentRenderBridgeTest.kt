@@ -2,6 +2,7 @@ package com.nexanote.app
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.nexanote.app.canvas.CanvasTransform
+import com.nexanote.app.canvas.FormulaInput
 import com.nexanote.app.canvas.SampleDocument
 import com.nexanote.app.canvas.SceneParser
 import com.nexanote.app.canvas.ScenePrimitive
@@ -226,6 +227,42 @@ class DocumentRenderBridgeTest {
             Thread.sleep(20)
         }
         assertEquals(before + 1, after)
+    }
+
+    @Test
+    fun formulaIsParsedIntoAstAndRenderedWithClosedFormValue() {
+        var doc = NativeBridge.documentCreate("Matemáticas")
+        doc = NativeBridge.documentAddPage(doc, "{}")
+        val pageId = JSONObject(doc).getJSONArray("pages").getJSONObject(0).getString("id")
+
+        doc = NativeBridge.documentAddFormula(
+            doc,
+            pageId,
+            FormulaInput.toFormulaJson("\\frac{1}{2} + 2^{3}", 40f, 60f),
+        )
+
+        val ast = JSONObject(doc).getJSONArray("pages").getJSONObject(0)
+            .getJSONArray("elements").getJSONObject(0)
+            .getJSONObject("kind")
+        assertEquals("Formula", ast.getString("type"))
+        assertTrue("el AST debe persistirse", !ast.isNull("ast"))
+
+        val formula = SceneParser.parse(NativeBridge.documentRenderPage(doc, 0))
+            .primitives.filterIsInstance<ScenePrimitive.Formula>().single()
+        assertEquals(8.5, formula.value!!, 1e-9)
+    }
+
+    @Test
+    fun invalidFormulaRaisesControlledErrorInsteadOfCrashing() {
+        var doc = NativeBridge.documentCreate("x")
+        doc = NativeBridge.documentAddPage(doc, "{}")
+        val pageId = JSONObject(doc).getJSONArray("pages").getJSONObject(0).getString("id")
+        try {
+            NativeBridge.documentAddFormula(doc, pageId, FormulaInput.toFormulaJson("1 + * )", 0f, 0f))
+            throw AssertionError("esperaba IllegalStateException")
+        } catch (expected: IllegalStateException) {
+            // ok
+        }
     }
 
     @Test
