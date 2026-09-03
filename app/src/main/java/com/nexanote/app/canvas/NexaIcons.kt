@@ -370,6 +370,33 @@ object NexaIcons {
         }
     }
 
+    /** Exportar/compartir a PDF: flecha descendente sobre una bandeja. */
+    val ExportPdf: ImageVector by lazy {
+        vector("nexa_export_pdf") {
+            // Asta y punta de la flecha.
+            moveTo(11f, 3f)
+            lineTo(13f, 3f)
+            lineTo(13f, 12.17f)
+            lineTo(16.59f, 8.59f)
+            lineTo(18f, 10f)
+            lineTo(12f, 16f)
+            lineTo(6f, 10f)
+            lineTo(7.41f, 8.59f)
+            lineTo(11f, 12.17f)
+            close()
+            // Bandeja de destino.
+            moveTo(5f, 18f)
+            lineTo(7f, 18f)
+            lineTo(7f, 19f)
+            lineTo(17f, 19f)
+            lineTo(17f, 18f)
+            lineTo(19f, 18f)
+            lineTo(19f, 21f)
+            lineTo(5f, 21f)
+            close()
+        }
+    }
+
     val Refresh: ImageVector by lazy {
         vector("nexa_refresh") {
             moveTo(17.65f, 6.35f)

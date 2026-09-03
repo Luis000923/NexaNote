@@ -43,6 +43,8 @@ autosave offline-first y exportación a PDF (futuro).
 4: Captura de stylus / escritura manuscrita. 5: Formas geométricas. 6: Texto tipográfico.
 7: Motor matemático (parser + AST). 8: Gráficas de funciones (muestreo en el núcleo).
 **9: Historial Undo/Redo (instantáneas acotadas) + autosave / recuperación de sesión.**
+10: Imágenes en el núcleo + selector nativo en Android.
+**11: Exportación a PDF multipágina (`app/.../pdf/`, API nativa `PdfDocument` sobre la escena del núcleo).**
 
 ---
 
@@ -355,6 +357,16 @@ blob JSON opaco y expone `canUndo`/`canRedo` + `begin`/`record`/`undo()`/`redo()
 | `FormulaInput.kt` | `object FormulaInput`: `isCommittable`, `toFormulaJson(expression,x,y)` (`{expression,position}`); escape de backslashes LaTeX. |
 | `GraphInput.kt` | `object GraphInput`: `validate(expr,xMin,xMax) -> Validation.{Valid,Invalid}`, `toGraphJson(...)` (`GraphSpec` del núcleo); `DEFAULT_X_MIN/MAX`, `DEFAULT_SIZE`, `MAX_LEN`. |
 | `ImageInput.kt` **(Fase 10, en curso)** | Copia la imagen elegida al almacén local de activos de la app y serializa el `ImageSpec` para `documentAddImage`. |
+
+### Paquete `com.nexanote.app.pdf` (Fase 11)
+
+| Archivo | Contenido |
+|---|---|
+| `PdfPageLayout.kt` | Aritmética pura px lógicos `@96dpi` → puntos PDF (1/72"); `PX_TO_POINT = 0.75`. Tests JVM. |
+| `ScenePdfPainter.kt` | Pinta una `ScenePage` del núcleo en un `android.graphics.Canvas` (misma lista de primitivas que `DocumentCanvas`, sin gestos ni sombra). |
+| `PdfWriter.kt` | Interfaz `PdfWriter` + `AndroidPdfWriter` (API nativa `android.graphics.pdf.PdfDocument`, una página del PDF por página del documento, a su tamaño exacto). |
+
+La exportación se dispara desde `DocumentScreen` (icono `NexaIcons.ExportPdf`, `CreateDocument` del SAF) → `DocumentViewModel.exportPdf(images, openStream)`, que renderiza todas las páginas y escribe el PDF **fuera del hilo principal** (`Dispatchers.Default` + `Dispatchers.IO`), publicando el resultado en `export: StateFlow<PdfExportUiState>`. Se optó por la API de Android (no una crate de PDF en Rust) porque `render.rs` ya es la autoridad única sobre unidades/orden/muestreo: aquí sólo se rasteriza.
 
 ---
 

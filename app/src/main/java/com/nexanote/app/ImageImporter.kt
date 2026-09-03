@@ -84,19 +84,32 @@ object ImageImporter {
         source: String,
         maxDimension: Int = MAX_DIMENSION,
     ): ImageBitmap? = withContext(Dispatchers.IO) {
-        runCatching {
-            if (!ImageInput.isCommittable(source)) return@runCatching null
-            val file = File(context.filesDir, source)
-            if (!file.isFile) return@runCatching null
-
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(file.path, bounds)
-            val opts = BitmapFactory.Options().apply {
-                inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, maxDimension)
-            }
-            BitmapFactory.decodeFile(file.path, opts)?.asImageBitmap()
-        }.getOrNull()
+        decodeBitmap(context, source, maxDimension)?.asImageBitmap()
     }
+
+    /**
+     * Igual que [loadBitmap] pero **síncrona** y devolviendo el [Bitmap] de
+     * `android.graphics` sin envolver. Pensada para la exportación a PDF, que ya
+     * corre fuera del hilo principal y necesita el bitmap nativo para pintarlo en
+     * el `Canvas` del documento. `null` si la ruta no es válida, el archivo no
+     * existe o falla la decodificación.
+     */
+    fun decodeBitmap(
+        context: Context,
+        source: String,
+        maxDimension: Int = MAX_DIMENSION,
+    ): Bitmap? = runCatching {
+        if (!ImageInput.isCommittable(source)) return@runCatching null
+        val file = File(context.filesDir, source)
+        if (!file.isFile) return@runCatching null
+
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.path, bounds)
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, maxDimension)
+        }
+        BitmapFactory.decodeFile(file.path, opts)
+    }.getOrNull()
 
     /** Mayor potencia de 2 que mantiene ambos lados por debajo de [maxDimension]. */
     private fun sampleSizeFor(width: Int, height: Int, maxDimension: Int): Int {

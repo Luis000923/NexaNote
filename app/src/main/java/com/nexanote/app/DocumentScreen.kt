@@ -17,6 +17,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -53,12 +55,43 @@ import com.nexanote.app.canvas.NexaIcons
 fun DocumentScreen(viewModel: DocumentViewModel = viewModel()) {
     val state by viewModel.state.collectAsState()
     val history by viewModel.history.collectAsState()
+    val export by viewModel.export.collectAsState()
+
+    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Diálogo del sistema (Storage Access Framework) para elegir dónde guardar el
+    // PDF: no requiere permisos y permite guardarlo o compartirlo desde el picker.
+    val pdfLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/pdf"),
+    ) { uri ->
+        if (uri != null) {
+            viewModel.exportPdf(
+                images = { source -> ImageImporter.decodeBitmap(context, source) },
+                openStream = { context.contentResolver.openOutputStream(uri) },
+            )
+        }
+    }
+
+    LaunchedEffect(export.message) {
+        export.message?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.consumeExportState()
+        }
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("NexaNote") },
                 actions = {
+                    IconButton(
+                        onClick = { pdfLauncher.launch("NexaNote.pdf") },
+                        enabled = state is SceneUiState.Ready && export.phase != ExportPhase.Working,
+                    ) {
+                        Icon(NexaIcons.ExportPdf, contentDescription = "Exportar a PDF")
+                    }
                     IconButton(onClick = viewModel::undo, enabled = history.canUndo) {
                         Icon(NexaIcons.Undo, contentDescription = "Deshacer")
                     }

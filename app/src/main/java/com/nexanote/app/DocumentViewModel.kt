@@ -1,5 +1,6 @@
 package com.nexanote.app
 
+import android.graphics.Bitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nexanote.app.canvas.FormulaInput
@@ -15,8 +16,11 @@ import com.nexanote.app.canvas.StrokeColor
 import com.nexanote.app.canvas.StrokeGesture
 import com.nexanote.app.canvas.StrokeSample
 import com.nexanote.app.canvas.TextInput
+import com.nexanote.app.pdf.AndroidPdfWriter
+import com.nexanote.app.pdf.PdfWriter
 import com.nexanote.core.NativeBridge
 import com.nexanote.core.NativeCore
+import java.io.OutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -35,6 +39,16 @@ sealed interface SceneUiState {
 
 /** Estado de los controles de historial (habilitar/deshabilitar Undo y Redo). */
 data class HistoryUiState(val canUndo: Boolean = false, val canRedo: Boolean = false)
+
+/** Fase de la exportación a PDF (Fase 11). */
+enum class ExportPhase { Idle, Working, Done, Failed }
+
+/** Estado del flujo de exportación a PDF, para dar retroalimentación en la UI. */
+data class PdfExportUiState(
+    val phase: ExportPhase = ExportPhase.Idle,
+    /** Mensaje breve para mostrar una sola vez (éxito o error); `null` en reposo. */
+    val message: String? = null,
+)
 
 /**
  * ViewModel de la pantalla de documento. No contiene lógica de dominio: pide al
@@ -60,6 +74,14 @@ class DocumentViewModel(
         SampleDocument.buildDocument(it)
     },
     private val pageIdOf: (String) -> String = SampleDocument::firstPageId,
+    /** Renderiza la página `index` del documento a su escena. Inyectable para tests sin `org.json`. */
+    private val renderScene: (String, Int) -> ScenePage = { documentJson, index ->
+        SceneParser.parse(core.documentRenderPage(documentJson, index))
+    },
+    /** Número de páginas del documento. Inyectable para tests sin `org.json`. */
+    private val pageCountOf: (String) -> Int = SampleDocument::pageCount,
+    /** Serializador de PDF. Inyectable para tests (la API nativa no existe en JVM). */
+    private val pdfWriter: PdfWriter = AndroidPdfWriter,
 ) : ViewModel() {
 
     /** Constructor sin argumentos requerido por la factoría por defecto de `viewModel()`. */
@@ -70,6 +92,9 @@ class DocumentViewModel(
 
     private val _history = MutableStateFlow(HistoryUiState())
     val history: StateFlow<HistoryUiState> = _history.asStateFlow()
+
+    private val _export = MutableStateFlow(PdfExportUiState())
+    val export: StateFlow<PdfExportUiState> = _export.asStateFlow()
 
     private val historyController = DocumentHistory(core)
 
@@ -117,7 +142,7 @@ class DocumentViewModel(
             }
             historyController.begin(documentJson!!)
             publishHistory()
-            SceneParser.parse(core.documentRenderPage(documentJson!!, 0))
+            renderScene(documentJson!!, 0)
         }.fold(
             onSuccess = { SceneUiState.Ready(it) },
             onFailure = { SceneUiState.Error(it.message ?: it.javaClass.simpleName) },
@@ -194,6 +219,59 @@ class DocumentViewModel(
     }
 
     /**
+     * Exporta el documento activo a un **PDF multipágina** (Fase 11).
+     *
+     * Todo el trabajo -- renderizar cada página en el núcleo, rasterizar las
+     * primitivas y escribir el PDF -- ocurre fuera del hilo principal
+     * (`Dispatchers.Default` para CPU, `Dispatchers.IO` para el volcado). La UI
+     * sólo observa [export].
+     *
+     * @param images resuelve la ruta relativa de una imagen a su bitmap (la capa
+     *   Android la decodifica del almacén local); devuelve `null` si no procede.
+     * @param openStream abre el destino del PDF (p. ej. el `OutputStream` de un
+     *   `Uri` del Storage Access Framework). Se invoca ya fuera del hilo de UI.
+     */
+    fun exportPdf(images: (String) -> Bitmap?, openStream: () -> OutputStream?) {
+        val doc = documentJson
+        if (doc == null) {
+            _export.value = PdfExportUiState(ExportPhase.Failed, "El documento aún no está listo")
+            return
+        }
+        if (_export.value.phase == ExportPhase.Working) return
+        _export.value = PdfExportUiState(ExportPhase.Working)
+
+        viewModelScope.launch {
+            val result = runCatching {
+                val pages = withContext(Dispatchers.Default) {
+                    val count = pageCountOf(doc).coerceAtLeast(1)
+                    (0 until count).map { index -> renderScene(doc, index) }
+                }
+                withContext(Dispatchers.IO) {
+                    val stream = openStream() ?: error("No se pudo abrir el destino del PDF")
+                    stream.use { pdfWriter.write(pages, images, it) }
+                }
+                pages.size
+            }
+            _export.value = result.fold(
+                onSuccess = { n ->
+                    PdfExportUiState(
+                        ExportPhase.Done,
+                        "PDF exportado ($n ${if (n == 1) "página" else "páginas"})",
+                    )
+                },
+                onFailure = {
+                    PdfExportUiState(ExportPhase.Failed, it.message ?: "No se pudo exportar el PDF")
+                },
+            )
+        }
+    }
+
+    /** La UI llama a esto tras mostrar el mensaje de [export] para volver a reposo. */
+    fun consumeExportState() {
+        _export.value = PdfExportUiState()
+    }
+
+    /**
      * Ejecuta una edición del núcleo fuera del hilo principal: aplica el
      * documento resultante, lo registra en el historial, lo autoguarda y publica
      * la escena. Un fallo del núcleo deja la escena y el historial intactos.
@@ -203,7 +281,7 @@ class DocumentViewModel(
             val result = withContext(Dispatchers.Default) {
                 runCatching {
                     val updated = mutate()
-                    updated to SceneParser.parse(core.documentRenderPage(updated, 0))
+                    updated to renderScene(updated, 0)
                 }
             }
             result.onSuccess { (updated, scene) ->
@@ -221,7 +299,7 @@ class DocumentViewModel(
             val result = withContext(Dispatchers.Default) {
                 runCatching {
                     val doc = step() ?: return@runCatching null
-                    doc to SceneParser.parse(core.documentRenderPage(doc, 0))
+                    doc to renderScene(doc, 0)
                 }
             }
             result.onSuccess { pair ->

@@ -101,6 +101,10 @@ object SampleDocument {
     fun firstPageId(documentJson: String): String =
         JSONObject(documentJson).getJSONArray("pages").getJSONObject(0).getString("id")
 
+    /** Número de páginas de un documento serializado. */
+    fun pageCount(documentJson: String): Int =
+        JSONObject(documentJson).getJSONArray("pages").length()
+
     fun buildScene(core: NativeCore, title: String = "Documento de ejemplo"): ScenePage {
         val loaded = buildDocument(core, title)
         return SceneParser.parse(core.documentRenderPage(loaded.documentJson, 0))
