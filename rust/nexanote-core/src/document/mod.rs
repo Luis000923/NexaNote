@@ -19,6 +19,7 @@ pub mod geometry;
 pub mod id;
 pub mod model;
 pub mod page;
+pub mod render;
 
 pub use element::{
     BinaryOp, Element, ElementKind, Formula, FormulaNode, Shape, ShapeKind, Stroke, StrokePoint,
@@ -29,6 +30,7 @@ pub use geometry::{Color, Point, Rect, Transformable};
 pub use id::{DocumentId, ElementId, Id, PageId};
 pub use model::{Document, DocumentMetadata, SCHEMA_VERSION};
 pub use page::{Page, PageSize, PageTemplate};
+pub use render::{build_scene, render_page, ScenePage, ScenePrimitive, SceneTemplate};
 
 /// Epoch actual en milisegundos. `0` si el reloj del sistema es anterior a 1970
 /// (no se propaga el error: una marca de tiempo degradada no debe tumbar una

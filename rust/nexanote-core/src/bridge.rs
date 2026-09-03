@@ -8,7 +8,7 @@ use jni::objects::{JObject, JString};
 use jni::sys::jstring;
 use jni::JNIEnv;
 
-use crate::document::{api, DocumentError};
+use crate::document::{api, render, DocumentError};
 use crate::{greeting, CORE_VERSION};
 
 /// Traduce un [`DocumentError`] a una excepción Java y devuelve un `jstring` nulo.
@@ -162,6 +162,22 @@ pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentTranslatePage
         &mut env,
         api::translate_page_elements(&doc, &page_id, dx, dy),
     )
+}
+
+/// `external fun documentRenderPage(documentJson: String, pageIndex: Int): String`
+///
+/// Devuelve la **escena plana** (JSON `ScenePage`) de la página indicada, lista
+/// para que el Canvas de Compose la pinte sin conocer el modelo.
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentRenderPage<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    document_json: JString<'local>,
+    page_index: jni::sys::jint,
+) -> jstring {
+    let doc = read_string(&mut env, &document_json);
+    let index = if page_index < 0 { 0usize } else { page_index as usize };
+    run_api(&mut env, render::render_page(&doc, index))
 }
 
 /// `external fun documentSummary(documentJson: String): String`

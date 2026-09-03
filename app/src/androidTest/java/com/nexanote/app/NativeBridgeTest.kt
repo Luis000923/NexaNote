@@ -22,7 +22,7 @@ class NativeBridgeTest {
 
     @Test
     fun greetingCrossesTheBridge() {
-        assertEquals("Hola, NexaNote 👋", NativeBridge.greeting("NexaNote"))
+        assertEquals("Hola, NexaNote", NativeBridge.greeting("NexaNote"))
     }
 
     @Test

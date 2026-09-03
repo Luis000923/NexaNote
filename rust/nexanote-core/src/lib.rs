@@ -23,9 +23,9 @@ pub const CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub fn greeting(name: &str) -> String {
     let name = name.trim();
     if name.is_empty() {
-        "Hola 👋".to_string()
+        "Hola".to_string()
     } else {
-        format!("Hola, {name} 👋")
+        format!("Hola, {name}")
     }
 }
 
@@ -35,17 +35,17 @@ mod tests {
 
     #[test]
     fn greeting_with_name() {
-        assert_eq!(greeting("NexaNote"), "Hola, NexaNote 👋");
+        assert_eq!(greeting("NexaNote"), "Hola, NexaNote");
     }
 
     #[test]
     fn greeting_trims_whitespace() {
-        assert_eq!(greeting("  NexaNote  "), "Hola, NexaNote 👋");
+        assert_eq!(greeting("  NexaNote  "), "Hola, NexaNote");
     }
 
     #[test]
     fn greeting_empty_falls_back() {
-        assert_eq!(greeting("   "), "Hola 👋");
+        assert_eq!(greeting("   "), "Hola");
     }
 
     #[test]

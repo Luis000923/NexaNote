@@ -55,6 +55,8 @@ object NativeBridge : NativeCore {
     ): String
 
     external override fun documentSummary(documentJson: String): String
+
+    external override fun documentRenderPage(documentJson: String, pageIndex: Int): String
 }
 
 /** Contrato del núcleo. La UI depende de esta interfaz, no de la implementación JNI. */
@@ -98,4 +100,11 @@ interface NativeCore {
      * `{"id","title","schema_version","page_count","element_count"}`.
      */
     fun documentSummary(documentJson: String): String
+
+    /**
+     * Devuelve la *escena plana* (`ScenePage` en JSON) de la página `pageIndex`:
+     * tamaño en píxeles, plantilla de fondo y lista de primitivas de dibujo ya
+     * ordenadas. La UI la pinta tal cual; no interpreta el modelo.
+     */
+    fun documentRenderPage(documentJson: String, pageIndex: Int): String
 }

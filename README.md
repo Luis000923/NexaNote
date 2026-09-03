@@ -11,7 +11,8 @@ interfaz en **Kotlin + Jetpack Compose**, comunicación por **JNI/FFI**.
 NexaNote/
 ├── app/                       # Aplicación Android (Kotlin + Compose)
 │   └── src/main/java/com/nexanote/
-│       ├── app/               # UI: Activities y Composables
+│       ├── app/               # UI: Activities, ViewModel y pantallas Compose
+│       ├── app/canvas/        # Lienzo de documento (Compose Canvas) + modelo de render
 │       └── core/              # Puente JNI (NativeBridge) — única frontera con Rust
 ├── rust/                      # Núcleo nativo (workspace Cargo)
 │   ├── nexanote-core/         # Lógica + adaptador JNI (módulo `bridge`)
@@ -40,12 +41,35 @@ cd rust && cargo test
 
 ## Tests
 
-- **Rust:** `cd rust && cargo test` — tests unitarios del núcleo.
-- **Android:** `./gradlew :app:connectedDebugAndroidTest` — valida la carga de
-  `libnexanote_core` y la respuesta del puente (requiere dispositivo/emulador).
+- **Rust:** `cd rust && cargo test` — tests unitarios del núcleo (incl. `render`).
+- **Android (JVM):** `./gradlew :app:testDebugUnitTest` — aritmética de
+  `CanvasTransform`.
+- **Android (instrumentado):** `./gradlew :app:connectedDebugAndroidTest` — carga
+  de `libnexanote_core`, respuesta del puente y comunicación ViewModel ↔ núcleo
+  para los datos de render (requiere dispositivo/emulador).
 
 ## Puente de comunicación
 
-`com.nexanote.core.NativeBridge` expone `greeting(name)` y `coreVersion()`,
-resueltas por JNI contra `rust/nexanote-core/src/bridge.rs`. `MainActivity`
-muestra el saludo devuelto por el núcleo como prueba de vida del FFI.
+`com.nexanote.core.NativeBridge` es la única frontera JNI (resuelta contra
+`rust/nexanote-core/src/bridge.rs`). Superficie actual:
+
+- `greeting(name)`, `coreVersion()` — prueba de vida del FFI.
+- Modelo de documento (Fase 2): `documentCreate`, `documentAddPage`,
+  `documentAddElement`, `documentRemove*`, `documentTranslatePageElements`,
+  `documentSummary`.
+- Render (Fase 3): `documentRenderPage(documentJson, pageIndex)` devuelve una
+  **escena plana** (`ScenePage`: tamaño en px, plantilla y primitivas ordenadas)
+  que el `DocumentCanvas` de Compose pinta sin interpretar el modelo.
+
+## Fase 3 — Visualización
+
+`MainActivity → DocumentScreen` carga un documento de ejemplo construido **en el
+núcleo Rust** (`SampleDocument`) y lo pinta con `DocumentCanvas`:
+
+- Límites de página (A4) y plantilla (cuadrícula / renglones / puntos / blanca).
+- Trazos y formas (rectángulo, elipse, línea, flecha), texto y fórmula.
+- Zoom y desplazamiento por gestos (`detectTransformGestures`) y por controles.
+- Interfaz 100 % vectorial: iconos propios en `NexaIcons` (`ImageVector`), sin
+  emojis ni `material-icons-extended`.
+
+La aritmética de zoom/pan vive en `CanvasTransform` (clase pura, con tests JVM).
