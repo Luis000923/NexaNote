@@ -14,7 +14,7 @@
 
 use serde::Serialize;
 
-use super::element::{Element, ElementKind, ShapeKind};
+use super::element::{Element, ElementKind, Graph, ShapeKind};
 use super::error::{DocResult, DocumentError};
 use super::geometry::Color;
 use super::model::Document;
@@ -106,6 +106,29 @@ pub enum ScenePrimitive {
         color: Color,
         value: Option<f64>,
     },
+    /// Gráfica de una función: marco, cuadrícula, ejes cartesianos y la curva ya
+    /// muestreada, **todo en píxeles de página**. La UI sólo traza líneas y
+    /// polilíneas; el muestreo numérico ya lo hizo el núcleo.
+    Graph {
+        /// Marco de la gráfica (esquina superior-izquierda + tamaño).
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        /// Fuente de la función, para rotularla.
+        expression: String,
+        color: Color,
+        /// Líneas verticales de la cuadrícula (x de página).
+        grid_x: Vec<f32>,
+        /// Líneas horizontales de la cuadrícula (y de página).
+        grid_y: Vec<f32>,
+        /// `x` de página del eje Y (`var = 0`), si cae dentro del marco.
+        axis_x: Option<f32>,
+        /// `y` de página del eje X (`f = 0`), si cae dentro del marco.
+        axis_y: Option<f32>,
+        /// Tramos continuos de la curva; se rompe en cada hueco de la función.
+        polylines: Vec<Vec<ScenePoint>>,
+    },
 }
 
 /// Escena completa de una página.
@@ -166,6 +189,7 @@ fn element_to_primitive(el: &Element) -> ScenePrimitive {
                 .as_ref()
                 .and_then(|ast| super::math::evaluate(ast, &std::collections::HashMap::new()).ok()),
         },
+        ElementKind::Graph(g) => graph_to_primitive(g),
         ElementKind::Shape(sh) => {
             let b = sh.bounds;
             match sh.kind {
@@ -205,6 +229,131 @@ fn element_to_primitive(el: &Element) -> ScenePrimitive {
                 },
             }
         }
+    }
+}
+
+/// Divisor "bonito" (1, 2, 5 x 10^k) más cercano a `span / target`.
+fn nice_step(span: f64, target: f64) -> f64 {
+    if !span.is_finite() || span <= 0.0 || target <= 0.0 {
+        return 1.0;
+    }
+    let raw = span / target;
+    let mag = 10f64.powf(raw.log10().floor());
+    let norm = raw / mag;
+    let factor = if norm < 1.5 {
+        1.0
+    } else if norm < 3.0 {
+        2.0
+    } else if norm < 7.0 {
+        5.0
+    } else {
+        10.0
+    };
+    factor * mag
+}
+
+/// Rango vertical robusto de la curva: percentiles 5-95 de las ordenadas finitas,
+/// forzando a incluir el eje `f = 0` y con un pequeño margen. Evita que una
+/// asíntota (p. ej. `tan`) reviente la escala. `(-1, 1)` si no hay datos.
+fn curve_y_range(samples: &[super::math::CurveSample]) -> (f64, f64) {
+    let mut ys: Vec<f64> = samples.iter().filter_map(|s| s.y).collect();
+    if ys.is_empty() {
+        return (-1.0, 1.0);
+    }
+    ys.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let at = |q: f64| ys[(((ys.len() - 1) as f64) * q).round() as usize];
+    let mut lo = at(0.05).min(0.0);
+    let mut hi = at(0.95).max(0.0);
+    if (hi - lo).abs() < 1e-9 {
+        lo -= 1.0;
+        hi += 1.0;
+    }
+    let pad = (hi - lo) * 0.08;
+    (lo - pad, hi + pad)
+}
+
+/// Posiciones de cuadrícula (en píxeles de página) para un eje: los múltiplos de
+/// `step` dentro de `[min, max]`, mapeados con `to_px`. Acotado a 256 líneas.
+fn grid_lines(min: f64, max: f64, step: f64, to_px: impl Fn(f64) -> f32) -> Vec<f32> {
+    let mut out = Vec::new();
+    if step <= 0.0 || !step.is_finite() {
+        return out;
+    }
+    let first = (min / step).ceil() as i64;
+    let last = (max / step).floor() as i64;
+    if last < first || last - first > 256 {
+        return out;
+    }
+    for k in first..=last {
+        out.push(to_px(k as f64 * step));
+    }
+    out
+}
+
+/// Traduce un [`Graph`] a su primitiva de escena: muestrea la curva con el motor
+/// matemático y proyecta dominio/rango al marco en píxeles de página.
+fn graph_to_primitive(g: &Graph) -> ScenePrimitive {
+    let frame = g.frame;
+    let color = Color::rgb(21, 101, 192);
+
+    let samples = g
+        .ast
+        .as_ref()
+        .and_then(|ast| {
+            super::math::sample_function(ast, &g.var, g.x_min, g.x_max, g.samples).ok()
+        })
+        .unwrap_or_default();
+
+    let (y_min, y_max) = curve_y_range(&samples);
+    let x_span = (g.x_max - g.x_min).max(f64::MIN_POSITIVE);
+    let y_span = (y_max - y_min).max(f64::MIN_POSITIVE);
+
+    let to_px_x = |x: f64| frame.x + ((x - g.x_min) / x_span) as f32 * frame.width;
+    // El eje vertical de la pantalla crece hacia abajo: se invierte.
+    let to_px_y = |y: f64| frame.y + ((y_max - y) / y_span) as f32 * frame.height;
+
+    let x_step = nice_step(x_span, 8.0);
+    let y_step = nice_step(y_span, 6.0);
+    let grid_x = grid_lines(g.x_min, g.x_max, x_step, to_px_x);
+    let grid_y = grid_lines(y_min, y_max, y_step, to_px_y);
+
+    let axis_x = (g.x_min <= 0.0 && g.x_max >= 0.0).then(|| to_px_x(0.0));
+    let axis_y = (y_min <= 0.0 && y_max >= 0.0).then(|| to_px_y(0.0));
+
+    // Segmentos continuos: se corta en cada hueco y al salir del rango vertical.
+    let mut polylines: Vec<Vec<ScenePoint>> = Vec::new();
+    let mut current: Vec<ScenePoint> = Vec::new();
+    for s in &samples {
+        match s.y {
+            Some(y) if y >= y_min && y <= y_max => current.push(ScenePoint {
+                x: to_px_x(s.x),
+                y: to_px_y(y),
+            }),
+            _ => {
+                if current.len() >= 2 {
+                    polylines.push(std::mem::take(&mut current));
+                } else {
+                    current.clear();
+                }
+            }
+        }
+    }
+    if current.len() >= 2 {
+        polylines.push(current);
+    }
+
+    ScenePrimitive::Graph {
+        x: frame.x,
+        y: frame.y,
+        width: frame.width,
+        height: frame.height,
+        expression: g.expression.clone(),
+        color,
+        grid_x,
+        grid_y,
+        axis_x,
+        axis_y,
+        polylines,
     }
 }
 
@@ -350,6 +499,48 @@ mod tests {
         match &scene.primitives[0] {
             ScenePrimitive::Formula { value, .. } => assert_eq!(*value, None),
             other => panic!("esperaba Formula, no {other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_primitive_samples_curve_and_places_axes() {
+        let (doc, page_id) = doc_with_grid_page();
+        let spec = r#"{"expression":"x^2","position":{"x":0.0,"y":0.0},
+            "width":200.0,"height":200.0,"x_min":-2.0,"x_max":2.0,"samples":33}"#;
+        let doc = api::add_graph(&doc, &page_id, spec).unwrap();
+        let scene = build_scene(&doc, 0).unwrap();
+        match &scene.primitives[0] {
+            ScenePrimitive::Graph {
+                width,
+                height,
+                axis_x,
+                polylines,
+                expression,
+                ..
+            } => {
+                assert_eq!((*width, *height), (200.0, 200.0));
+                assert_eq!(expression, "x^2");
+                // El eje Y (x = 0) está en el centro del marco de 200 px.
+                assert!((axis_x.unwrap() - 100.0).abs() < 1.0);
+                assert_eq!(polylines.len(), 1);
+                assert!(polylines[0].len() > 20);
+            }
+            other => panic!("esperaba Graph, no {other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_primitive_breaks_curve_at_discontinuity() {
+        let (doc, page_id) = doc_with_grid_page();
+        let spec = r#"{"expression":"1 / x","position":{"x":0.0,"y":0.0},
+            "width":100.0,"height":100.0,"x_min":-3.0,"x_max":3.0,"samples":61}"#;
+        let doc = api::add_graph(&doc, &page_id, spec).unwrap();
+        let scene = build_scene(&doc, 0).unwrap();
+        match &scene.primitives[0] {
+            ScenePrimitive::Graph { polylines, .. } => {
+                assert!(polylines.len() >= 2, "la curva debe partirse en x = 0");
+            }
+            other => panic!("esperaba Graph, no {other:?}"),
         }
     }
 

@@ -55,6 +55,20 @@ object SampleDocument {
         Triple("\\sum_{i=1}^{10} i", 150f, 210f),
     )
 
+    /** Gráficas de ejemplo `(expresión, xMin, xMax, x, y)`, muestreadas por el núcleo. */
+    private val GRAPHS: List<GraphSpecSample> = listOf(
+        GraphSpecSample("sin(x)", -6.2832, 6.2832, 60f, 400f),
+        GraphSpecSample("x^2 / 4 - 2", -6.0, 6.0, 300f, 400f),
+    )
+
+    private data class GraphSpecSample(
+        val expression: String,
+        val xMin: Double,
+        val xMax: Double,
+        val x: Float,
+        val y: Float,
+    )
+
     /** Documento de ejemplo ya construido en el núcleo: su JSON y el id de su página. */
     data class LoadedDocument(val documentJson: String, val pageId: String)
 
@@ -72,6 +86,13 @@ object SampleDocument {
         }
         for ((expression, x, y) in FORMULAS) {
             doc = core.documentAddFormula(doc, pageId, FormulaInput.toFormulaJson(expression, x, y))
+        }
+        for (g in GRAPHS) {
+            doc = core.documentAddGraph(
+                doc,
+                pageId,
+                GraphInput.toGraphJson(g.expression, g.xMin, g.xMax, g.x, g.y, width = 220f, height = 170f),
+            )
         }
         return LoadedDocument(doc, pageId)
     }

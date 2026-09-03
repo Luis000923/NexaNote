@@ -31,6 +31,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nexanote.app.canvas.CanvasTransform
 import com.nexanote.app.canvas.DocumentCanvas
 import com.nexanote.app.canvas.DrawingTool
+import com.nexanote.app.canvas.GraphInput
 import com.nexanote.app.canvas.NexaIcons
 
 /**
@@ -80,6 +81,10 @@ fun DocumentScreen(viewModel: DocumentViewModel = viewModel()) {
                     var pendingFormula by remember(s.scene.pageId) {
                         mutableStateOf<Pair<Float, Float>?>(null)
                     }
+                    // Esquina (coords del documento) de una gráfica pendiente de definir.
+                    var pendingGraph by remember(s.scene.pageId) {
+                        mutableStateOf<Pair<Float, Float>?>(null)
+                    }
                     DocumentCanvas(
                         scene = s.scene,
                         transform = transform,
@@ -89,6 +94,7 @@ fun DocumentScreen(viewModel: DocumentViewModel = viewModel()) {
                         onShapeCommit = viewModel::commitShape,
                         onTextRequest = { x, y -> pendingText = x to y },
                         onFormulaRequest = { x, y -> pendingFormula = x to y },
+                        onGraphRequest = { x, y -> pendingGraph = x to y },
                         modifier = Modifier.fillMaxSize(),
                     )
                     pendingText?.let { (x, y) ->
@@ -110,6 +116,15 @@ fun DocumentScreen(viewModel: DocumentViewModel = viewModel()) {
                             onConfirm = { expression ->
                                 viewModel.commitFormula(x, y, expression)
                                 pendingFormula = null
+                            },
+                        )
+                    }
+                    pendingGraph?.let { (x, y) ->
+                        GraphDialog(
+                            onDismiss = { pendingGraph = null },
+                            onConfirm = { expression, xMin, xMax ->
+                                viewModel.commitGraph(x, y, expression, xMin, xMax)
+                                pendingGraph = null
                             },
                         )
                     }
@@ -148,6 +163,7 @@ private val TOOLS: List<Pair<DrawingTool, Pair<ImageVector, String>>> = listOf(
     DrawingTool.Arrow to (NexaIcons.ShapeArrow to "Flecha"),
     DrawingTool.Text to (NexaIcons.TextTool to "Texto"),
     DrawingTool.Formula to (NexaIcons.Formula to "Fórmula matemática"),
+    DrawingTool.Graph to (NexaIcons.GraphTool to "Gráfica de función"),
     DrawingTool.Pan to (NexaIcons.Hand to "Navegación"),
 )
 
@@ -176,6 +192,64 @@ private fun EntryDialog(
                 onClick = { onConfirm(content) },
                 enabled = content.isNotBlank(),
             ) { Text("Añadir") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
+        },
+    )
+}
+
+/** Diálogo para definir una gráfica de función: expresión y dominio `[x min, x max]`. */
+@Composable
+private fun GraphDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (expression: String, xMin: Double, xMax: Double) -> Unit,
+) {
+    var expression by remember { mutableStateOf("") }
+    var xMin by remember { mutableStateOf(GraphInput.DEFAULT_X_MIN.toString()) }
+    var xMax by remember { mutableStateOf(GraphInput.DEFAULT_X_MAX.toString()) }
+    val validation = GraphInput.validate(expression, xMin, xMax)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Nueva gráfica de función") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = expression,
+                    onValueChange = { expression = it.take(GraphInput.MAX_LEN) },
+                    label = { Text("Función y = f(x), p. ej. x^2 o \\sin(x)") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = xMin,
+                    onValueChange = { xMin = it },
+                    label = { Text("x mínimo") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = xMax,
+                    onValueChange = { xMax = it },
+                    label = { Text("x máximo") },
+                    singleLine = true,
+                )
+                if (validation is GraphInput.Validation.Invalid && expression.isNotBlank()) {
+                    Text(
+                        text = validation.reason,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    (validation as? GraphInput.Validation.Valid)?.let {
+                        onConfirm(it.expression, it.xMin, it.xMax)
+                    }
+                },
+                enabled = validation is GraphInput.Validation.Valid,
+            ) { Text("Graficar") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancelar") }

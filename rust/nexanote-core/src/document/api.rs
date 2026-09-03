@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::element::{ElementKind, Formula, Shape, ShapeKind, Stroke, TextBox};
+use super::element::{ElementKind, Formula, Graph, Shape, ShapeKind, Stroke, TextBox};
 use super::error::{DocResult, DocumentError};
 use super::geometry::Point;
 use super::math;
@@ -310,6 +310,128 @@ pub fn add_formula(document_json: &str, page_id: &str, formula_json: &str) -> Do
         ast: Some(ast),
     };
     doc.page_mut(id)?.add_element(ElementKind::Formula(formula));
+    doc.to_json()
+}
+
+/// Límites del número de puntos de muestreo de una gráfica que la API acepta.
+const MIN_GRAPH_SAMPLES: u32 = 8;
+const MAX_GRAPH_SAMPLES: u32 = 2048;
+
+/// Tamaño mínimo (px lógicos) del marco de una gráfica.
+const MIN_GRAPH_EXTENT: f32 = 16.0;
+
+fn default_graph_var() -> String {
+    "x".to_string()
+}
+
+fn default_graph_samples() -> u32 {
+    256
+}
+
+/// Especificación de entrada para insertar una gráfica de función.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GraphSpec {
+    /// Función a graficar, en dialecto ASCII/LaTeX (ver [`math`]).
+    expression: String,
+    /// Esquina superior-izquierda del marco en la página (px lógicos @1x).
+    position: Point,
+    width: f32,
+    height: f32,
+    x_min: f64,
+    x_max: f64,
+    #[serde(default = "default_graph_var")]
+    var: String,
+    #[serde(default = "default_graph_samples")]
+    samples: u32,
+}
+
+/// Inserta una **gráfica de función** `y = f(var)` en la página `page_id`.
+///
+/// `graph_json` es un [`GraphSpec`] serializado
+/// (`{"expression":"x^2","position":{"x":..,"y":..},"width":..,"height":..,"x_min":..,"x_max":..}`;
+/// `var` por defecto `"x"`, `samples` por defecto `256`). El núcleo:
+///
+///  - recorta la expresión y exige que no quede vacía ni supere [`MAX_FORMULA_LEN`];
+///  - exige posición y tamaño finitos, y un marco de al menos [`MIN_GRAPH_EXTENT`];
+///  - exige un dominio finito con `x_min < x_max`;
+///  - satura `samples` a `[MIN_GRAPH_SAMPLES, MAX_GRAPH_SAMPLES]`;
+///  - **parsea** la función a un AST y rechaza cualquier símbolo libre distinto de
+///    `var` ([`DocumentError::InvalidArgument`], nunca `panic`).
+///
+/// El muestreo numérico de la curva **no** se hace aquí, sino en la capa de
+/// *render* al construir la escena. Devuelve el documento actualizado.
+pub fn add_graph(document_json: &str, page_id: &str, graph_json: &str) -> DocResult<String> {
+    let mut doc = Document::from_json(document_json)?;
+    let id = page_id.parse()?;
+    let spec: GraphSpec = parse(graph_json, "graph")?;
+
+    let expression = spec.expression.trim();
+    if expression.is_empty() {
+        return Err(DocumentError::InvalidArgument(
+            "una gráfica necesita una función no vacía".to_string(),
+        ));
+    }
+    if expression.chars().count() > MAX_FORMULA_LEN {
+        return Err(DocumentError::InvalidArgument(format!(
+            "la función supera {MAX_FORMULA_LEN} caracteres"
+        )));
+    }
+    let var = spec.var.trim();
+    if var.is_empty() {
+        return Err(DocumentError::InvalidArgument(
+            "el nombre de la variable no puede estar vacío".to_string(),
+        ));
+    }
+    if !(spec.position.x.is_finite()
+        && spec.position.y.is_finite()
+        && spec.width.is_finite()
+        && spec.height.is_finite())
+    {
+        return Err(DocumentError::InvalidArgument(
+            "la posición y el tamaño de la gráfica deben ser finitos".to_string(),
+        ));
+    }
+    if spec.width < MIN_GRAPH_EXTENT || spec.height < MIN_GRAPH_EXTENT {
+        return Err(DocumentError::InvalidArgument(format!(
+            "el marco de la gráfica debe medir al menos {MIN_GRAPH_EXTENT} px por lado"
+        )));
+    }
+    if !spec.x_min.is_finite() || !spec.x_max.is_finite() || spec.x_min >= spec.x_max {
+        return Err(DocumentError::InvalidArgument(
+            "el dominio debe ser finito con x_min < x_max".to_string(),
+        ));
+    }
+
+    let ast = math::parse(expression)
+        .map_err(|e| DocumentError::InvalidArgument(format!("función inválida: {e}")))?;
+
+    let free: Vec<String> = math::free_symbols(&ast)
+        .into_iter()
+        .filter(|s| s != var)
+        .collect();
+    if !free.is_empty() {
+        return Err(DocumentError::InvalidArgument(format!(
+            "la función depende de símbolos sin valor: {}",
+            free.join(", ")
+        )));
+    }
+
+    let graph = Graph {
+        expression: expression.to_string(),
+        ast: Some(ast),
+        var: var.to_string(),
+        frame: super::geometry::Rect::new(
+            spec.position.x,
+            spec.position.y,
+            spec.width,
+            spec.height,
+        ),
+        x_min: spec.x_min,
+        x_max: spec.x_max,
+        samples: spec.samples.clamp(MIN_GRAPH_SAMPLES, MAX_GRAPH_SAMPLES),
+    };
+    doc.page_mut(id)?.add_element(ElementKind::Graph(graph));
     doc.to_json()
 }
 
@@ -717,6 +839,76 @@ mod tests {
         let (doc, _) = doc_with_blank_page();
         let spec = r#"{"expression":"1+1","position":{"x":0.0,"y":0.0}}"#;
         let err = add_formula(&doc, "00000000000000000000000000000009", spec).unwrap_err();
+        assert!(matches!(err, DocumentError::PageNotFound(_)));
+    }
+
+    #[test]
+    fn add_graph_parses_function_and_clamps_samples() {
+        let (doc, page_id) = doc_with_blank_page();
+        let spec = r#"{"expression":"sin(x)","position":{"x":10.0,"y":20.0},
+            "width":300.0,"height":180.0,"x_min":-3.14159,"x_max":3.14159,"samples":100000}"#;
+        let doc = add_graph(&doc, &page_id, spec).unwrap();
+        let parsed = Document::from_json(&doc).unwrap();
+        match &parsed.pages[0].elements[0].kind {
+            ElementKind::Graph(g) => {
+                assert_eq!(g.expression, "sin(x)");
+                assert_eq!(g.var, "x");
+                assert_eq!(g.samples, MAX_GRAPH_SAMPLES);
+                assert!(g.ast.is_some());
+                assert_eq!((g.frame.width, g.frame.height), (300.0, 180.0));
+            }
+            other => panic!("esperaba Graph, no {other:?}"),
+        }
+    }
+
+    #[test]
+    fn add_graph_rejects_free_symbols_other_than_var() {
+        let (doc, page_id) = doc_with_blank_page();
+        let spec = r#"{"expression":"a*x + b","position":{"x":0.0,"y":0.0},
+            "width":100.0,"height":100.0,"x_min":-1.0,"x_max":1.0}"#;
+        assert!(matches!(
+            add_graph(&doc, &page_id, spec),
+            Err(DocumentError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn add_graph_accepts_custom_variable() {
+        let (doc, page_id) = doc_with_blank_page();
+        let spec = r#"{"expression":"t^2","position":{"x":0.0,"y":0.0},
+            "width":100.0,"height":100.0,"x_min":0.0,"x_max":5.0,"var":"t"}"#;
+        assert!(add_graph(&doc, &page_id, spec).is_ok());
+    }
+
+    #[test]
+    fn add_graph_rejects_bad_domain_tiny_frame_and_syntax() {
+        let (doc, page_id) = doc_with_blank_page();
+        let bad_domain = r#"{"expression":"x","position":{"x":0.0,"y":0.0},
+            "width":100.0,"height":100.0,"x_min":2.0,"x_max":2.0}"#;
+        assert!(matches!(
+            add_graph(&doc, &page_id, bad_domain),
+            Err(DocumentError::InvalidArgument(_))
+        ));
+        let tiny = r#"{"expression":"x","position":{"x":0.0,"y":0.0},
+            "width":4.0,"height":100.0,"x_min":-1.0,"x_max":1.0}"#;
+        assert!(matches!(
+            add_graph(&doc, &page_id, tiny),
+            Err(DocumentError::InvalidArgument(_))
+        ));
+        let bad_syntax = r#"{"expression":"x +* 2","position":{"x":0.0,"y":0.0},
+            "width":100.0,"height":100.0,"x_min":-1.0,"x_max":1.0}"#;
+        assert!(matches!(
+            add_graph(&doc, &page_id, bad_syntax),
+            Err(DocumentError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn add_graph_to_missing_page_errors() {
+        let (doc, _) = doc_with_blank_page();
+        let spec = r#"{"expression":"x","position":{"x":0.0,"y":0.0},
+            "width":100.0,"height":100.0,"x_min":-1.0,"x_max":1.0}"#;
+        let err = add_graph(&doc, "00000000000000000000000000000009", spec).unwrap_err();
         assert!(matches!(err, DocumentError::PageNotFound(_)));
     }
 

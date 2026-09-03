@@ -65,6 +65,12 @@ object NativeBridge : NativeCore {
         formulaJson: String,
     ): String
 
+    external override fun documentAddGraph(
+        documentJson: String,
+        pageId: String,
+        graphJson: String,
+    ): String
+
     external override fun documentRemoveElement(
         documentJson: String,
         pageId: String,
@@ -145,6 +151,18 @@ interface NativeCore {
      * [IllegalStateException]. Devuelve el documento actualizado.
      */
     fun documentAddFormula(documentJson: String, pageId: String, formulaJson: String): String
+
+    /**
+     * Inserta una **gráfica de función** `y = f(var)` en la página [pageId].
+     * [graphJson] es
+     * `{"expression":"x^2","position":{"x":..,"y":..},"width":..,"height":..,"x_min":..,"x_max":..}`
+     * (opcionales `var`, por defecto `"x"`, y `samples`, por defecto `256`). El
+     * núcleo Rust parsea la función a un AST, valida marco/dominio/símbolos y
+     * rechaza la entrada inválida como [IllegalStateException]. El muestreo
+     * numérico de la curva se hace al renderizar, nunca en el hilo de UI.
+     * Devuelve el documento actualizado.
+     */
+    fun documentAddGraph(documentJson: String, pageId: String, graphJson: String): String
 
     /** Elimina el elemento [elementId] de la página [pageId]. */
     fun documentRemoveElement(documentJson: String, pageId: String, elementId: String): String

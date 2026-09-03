@@ -82,4 +82,25 @@ sealed interface ScenePrimitive {
         /** Valor numérico si la expresión es cerrada (sin símbolos libres); si no, `null`. */
         val value: Double? = null,
     ) : ScenePrimitive
+
+    /**
+     * Gráfica de una función: marco, cuadrícula, ejes y la curva ya muestreada por
+     * el núcleo Rust, toda en coordenadas de página (px lógicos @1x).
+     */
+    data class Graph(
+        val topLeft: Offset,
+        val size: androidx.compose.ui.geometry.Size,
+        val expression: String,
+        val color: Color,
+        /** Posiciones x (página) de las líneas verticales de la cuadrícula. */
+        val gridX: List<Float>,
+        /** Posiciones y (página) de las líneas horizontales de la cuadrícula. */
+        val gridY: List<Float>,
+        /** x (página) del eje vertical (`var = 0`), si cae dentro del marco. */
+        val axisX: Float?,
+        /** y (página) del eje horizontal (`f = 0`), si cae dentro del marco. */
+        val axisY: Float?,
+        /** Tramos continuos de la curva; cada hueco de la función parte la lista. */
+        val polylines: List<List<Offset>>,
+    ) : ScenePrimitive
 }

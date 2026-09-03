@@ -79,6 +79,44 @@ class DocumentRenderBridgeTest {
         assertTrue("Polyline" in kinds)
         assertTrue("Text" in kinds)
         assertTrue("Formula" in kinds)
+        assertTrue("Graph" in kinds)
+    }
+
+    @Test
+    fun functionGraphIsSampledByRustAndRenderedWithAxes() {
+        var doc = NativeBridge.documentCreate("Gráficas")
+        doc = NativeBridge.documentAddPage(doc, "{}")
+        val pageId = JSONObject(doc).getJSONArray("pages").getJSONObject(0).getString("id")
+
+        doc = NativeBridge.documentAddGraph(
+            doc,
+            pageId,
+            com.nexanote.app.canvas.GraphInput.toGraphJson("x^2", -3.0, 3.0, 20f, 20f, 200f, 200f),
+        )
+
+        val graph = SceneParser.parse(NativeBridge.documentRenderPage(doc, 0))
+            .primitives.filterIsInstance<ScenePrimitive.Graph>().single()
+        assertEquals("x^2", graph.expression)
+        assertEquals(200f, graph.size.width, 1e-3f)
+        assertTrue("debe muestrear al menos un tramo de curva", graph.polylines.isNotEmpty())
+        assertTrue("el eje Y (x=0) cae dentro del marco", graph.axisX != null)
+    }
+
+    @Test
+    fun invalidGraphRaisesControlledErrorInsteadOfCrashing() {
+        var doc = NativeBridge.documentCreate("x")
+        doc = NativeBridge.documentAddPage(doc, "{}")
+        val pageId = JSONObject(doc).getJSONArray("pages").getJSONObject(0).getString("id")
+        try {
+            NativeBridge.documentAddGraph(
+                doc,
+                pageId,
+                com.nexanote.app.canvas.GraphInput.toGraphJson("a*x + b", -1.0, 1.0, 0f, 0f),
+            )
+            throw AssertionError("esperaba IllegalStateException")
+        } catch (expected: IllegalStateException) {
+            // ok: la función depende de símbolos sin valor.
+        }
     }
 
     @Test

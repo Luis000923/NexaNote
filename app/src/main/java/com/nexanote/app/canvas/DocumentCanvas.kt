@@ -55,6 +55,7 @@ fun DocumentCanvas(
     onShapeCommit: (ShapeKind, ShapeBounds) -> Unit = { _, _ -> },
     onTextRequest: (Float, Float) -> Unit = { _, _ -> },
     onFormulaRequest: (Float, Float) -> Unit = { _, _ -> },
+    onGraphRequest: (Float, Float) -> Unit = { _, _ -> },
 ) {
     // Trazo / forma en curso (coordenadas del documento). Se conservan pintados
     // hasta que llega la nueva escena del núcleo que ya los incluye: sin parpadeo.
@@ -96,6 +97,12 @@ fun DocumentCanvas(
                         detectTapGestures { pos ->
                             val (mx, my) = transform.screenToModel(pos.x, pos.y)
                             onFormulaRequest(mx, my)
+                        }
+
+                    tool == DrawingTool.Graph ->
+                        detectTapGestures { pos ->
+                            val (mx, my) = transform.screenToModel(pos.x, pos.y)
+                            onGraphRequest(mx, my)
                         }
 
                     else -> Unit // DrawingTool.Pan: sólo navega (transform gestures).
@@ -415,7 +422,47 @@ private fun DrawScope.drawPrimitive(p: ScenePrimitive) {
             val text = p.value?.let { "${p.latex} = ${formatValue(it)}" } ?: p.latex
             drawNativeText(text, p.origin, 18f, p.color, bold = false, italic = true, underline = false)
         }
+
+        is ScenePrimitive.Graph -> drawGraph(p)
     }
+}
+
+/** Pinta una gráfica de función: fondo, cuadrícula, ejes cartesianos y la curva. */
+private fun DrawScope.drawGraph(g: ScenePrimitive.Graph) {
+    val grid = Color(0xFFD3DBE6)
+    val axis = Color(0xFF5B6472)
+    val frame = Color(0xFF9AA6B2)
+
+    drawRect(Color(0xFFFCFDFF), topLeft = g.topLeft, size = g.size)
+
+    for (x in g.gridX) {
+        drawLine(grid, Offset(x, g.topLeft.y), Offset(x, g.topLeft.y + g.size.height), strokeWidth = 1f)
+    }
+    for (y in g.gridY) {
+        drawLine(grid, Offset(g.topLeft.x, y), Offset(g.topLeft.x + g.size.width, y), strokeWidth = 1f)
+    }
+
+    g.axisX?.let { x ->
+        drawLine(axis, Offset(x, g.topLeft.y), Offset(x, g.topLeft.y + g.size.height), strokeWidth = 1.6f)
+    }
+    g.axisY?.let { y ->
+        drawLine(axis, Offset(g.topLeft.x, y), Offset(g.topLeft.x + g.size.width, y), strokeWidth = 1.6f)
+    }
+
+    for (segment in g.polylines) {
+        if (segment.size < 2) continue
+        val path = Path().apply {
+            moveTo(segment[0].x, segment[0].y)
+            for (i in 1 until segment.size) lineTo(segment[i].x, segment[i].y)
+        }
+        drawPath(path, g.color, style = Stroke(width = 2f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+
+    drawRect(frame, topLeft = g.topLeft, size = g.size, style = Stroke(width = 1.2f))
+    drawNativeText(
+        g.expression, Offset(g.topLeft.x + 4f, g.topLeft.y + 14f), 13f, axis,
+        bold = false, italic = true, underline = false,
+    )
 }
 
 private fun DrawScope.drawNativeText(

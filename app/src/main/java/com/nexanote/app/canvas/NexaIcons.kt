@@ -281,6 +281,32 @@ object NexaIcons {
         }
     }
 
+    /** Herramienta de gráficas de funciones: ejes cartesianos con una curva. */
+    val GraphTool: ImageVector by lazy {
+        vector("nexa_graph_tool", PathFillType.EvenOdd) {
+            // Eje vertical.
+            moveTo(4f, 3f)
+            lineTo(5.4f, 3f)
+            lineTo(5.4f, 20f)
+            lineTo(4f, 20f)
+            close()
+            // Eje horizontal.
+            moveTo(4f, 18.6f)
+            lineTo(21f, 18.6f)
+            lineTo(21f, 20f)
+            lineTo(4f, 20f)
+            close()
+            // Curva creciente (banda con grosor).
+            moveTo(5.4f, 17.5f)
+            quadToRelative(6f, -1f, 9.4f, -7f)
+            quadToRelative(2.2f, -3.8f, 4.6f, -5.8f)
+            lineToRelative(1.1f, 1.2f)
+            quadToRelative(-2.2f, 1.9f, -4.3f, 5.5f)
+            quadToRelative(-3.8f, 6.4f, -10.4f, 7.5f)
+            close()
+        }
+    }
+
     val Refresh: ImageVector by lazy {
         vector("nexa_refresh") {
             moveTo(17.65f, 6.35f)

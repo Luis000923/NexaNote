@@ -703,6 +703,108 @@ pub fn parse_and_evaluate(expression: &str, vars: &HashMap<String, f64>) -> Math
     evaluate(&parse(expression)?, vars)
 }
 
+// ---------------------------------------------------------------------------
+// Símbolos libres y muestreo de curvas (Fase 8: gráficas de funciones)
+// ---------------------------------------------------------------------------
+
+/// Recoge los **símbolos libres** de `node`: los identificadores que no son
+/// constantes conocidas (`pi`, `e`, `tau`) ni la variable ligada de una sumatoria.
+/// La capa `api` lo usa para validar que una función de una variable no dependa
+/// de símbolos sin valor.
+pub fn free_symbols(node: &FormulaNode) -> std::collections::BTreeSet<String> {
+    let mut set = std::collections::BTreeSet::new();
+    collect_symbols(node, &mut set);
+    set
+}
+
+fn collect_symbols(node: &FormulaNode, out: &mut std::collections::BTreeSet<String>) {
+    match node {
+        FormulaNode::Number(_) => {}
+        FormulaNode::Symbol(s) => {
+            if constant(s).is_none() {
+                out.insert(s.clone());
+            }
+        }
+        FormulaNode::Neg(inner) | FormulaNode::Sqrt(inner) => collect_symbols(inner, out),
+        FormulaNode::Binary { lhs, rhs, .. } => {
+            collect_symbols(lhs, out);
+            collect_symbols(rhs, out);
+        }
+        FormulaNode::Fraction {
+            numerator,
+            denominator,
+        } => {
+            collect_symbols(numerator, out);
+            collect_symbols(denominator, out);
+        }
+        FormulaNode::Root { degree, radicand } => {
+            collect_symbols(degree, out);
+            collect_symbols(radicand, out);
+        }
+        FormulaNode::Call { arg, .. } => collect_symbols(arg, out),
+        FormulaNode::Sum {
+            var,
+            from,
+            to,
+            body,
+        } => {
+            collect_symbols(from, out);
+            collect_symbols(to, out);
+            let mut inner = std::collections::BTreeSet::new();
+            collect_symbols(body, &mut inner);
+            inner.remove(var);
+            out.extend(inner);
+        }
+    }
+}
+
+/// Cota dura del número de puntos que se muestrean para una curva.
+pub const MAX_CURVE_SAMPLES: u32 = 4096;
+
+/// Una muestra de la curva: la abscisa y, si la función está definida y es finita
+/// ahí, su ordenada. `y = None` marca un **hueco** (fuera de dominio, división por
+/// cero, no finito): la UI rompe la polilínea en ese punto en vez de unir tramos.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CurveSample {
+    pub x: f64,
+    pub y: Option<f64>,
+}
+
+/// Muestrea `node` como función de `var` en `[x_min, x_max]` con `samples` puntos
+/// equiespaciados (saturado a `[2, MAX_CURVE_SAMPLES]`).
+///
+/// Sólo falla si el dominio es inválido (extremos no finitos o `x_min >= x_max`).
+/// Un fallo puntual de evaluación **no** aborta el muestreo: se codifica como
+/// `y = None`. Es la operación pesada que el núcleo hace por la UI.
+pub fn sample_function(
+    node: &FormulaNode,
+    var: &str,
+    x_min: f64,
+    x_max: f64,
+    samples: u32,
+) -> MathResult<Vec<CurveSample>> {
+    if !x_min.is_finite() || !x_max.is_finite() || x_min >= x_max {
+        return Err(MathError::Domain(format!(
+            "dominio inválido [{x_min}, {x_max}]"
+        )));
+    }
+    let n = samples.clamp(2, MAX_CURVE_SAMPLES);
+    let step = (x_max - x_min) / (f64::from(n) - 1.0);
+    let mut vars: HashMap<String, f64> = HashMap::with_capacity(1);
+    let mut out = Vec::with_capacity(n as usize);
+    for i in 0..n {
+        let x = if i == n - 1 {
+            x_max
+        } else {
+            x_min + step * f64::from(i)
+        };
+        vars.insert(var.to_string(), x);
+        let y = evaluate(node, &vars).ok().filter(|v| v.is_finite());
+        out.push(CurveSample { x, y });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -879,6 +981,73 @@ mod tests {
     fn recursion_depth_is_bounded() {
         let deep = "(".repeat(500);
         assert_eq!(parse(&deep), Err(MathError::TooDeep));
+    }
+
+    #[test]
+    fn free_symbols_ignores_constants_and_bound_vars() {
+        assert_eq!(
+            free_symbols(&parse("x^2 + pi").unwrap()),
+            ["x".to_string()].into_iter().collect()
+        );
+        assert!(free_symbols(&parse("sin(2 pi)").unwrap()).is_empty());
+        // `i` está ligada por la sumatoria; `n` y `x` quedan libres.
+        assert_eq!(
+            free_symbols(&parse(r"x + \sum_{i=1}^{n} i").unwrap()),
+            ["n".to_string(), "x".to_string()].into_iter().collect()
+        );
+    }
+
+    #[test]
+    fn sample_function_covers_range_endpoints_and_count() {
+        let node = parse("x^2").unwrap();
+        let s = sample_function(&node, "x", -2.0, 2.0, 5).unwrap();
+        assert_eq!(s.len(), 5);
+        assert_eq!(s.first().unwrap().x, -2.0);
+        assert_eq!(s.last().unwrap().x, 2.0);
+        let ys: Vec<f64> = s.iter().map(|c| c.y.unwrap()).collect();
+        assert_eq!(ys, vec![4.0, 1.0, 0.0, 1.0, 4.0]);
+    }
+
+    #[test]
+    fn sample_function_matches_known_curves() {
+        let node = parse("sin(x)").unwrap();
+        let s = sample_function(&node, "x", 0.0, std::f64::consts::PI, 3).unwrap();
+        approx(s[0].y.unwrap(), 0.0);
+        approx(s[1].y.unwrap(), 1.0);
+        approx(s[2].y.unwrap(), 0.0);
+
+        let line = parse("2 x + 1").unwrap();
+        for c in sample_function(&line, "x", -10.0, 10.0, 21).unwrap() {
+            approx(c.y.unwrap(), 2.0 * c.x + 1.0);
+        }
+    }
+
+    #[test]
+    fn sample_function_marks_holes_without_aborting() {
+        // 1/x tiene un hueco en x = 0.
+        let node = parse("1 / x").unwrap();
+        let s = sample_function(&node, "x", -1.0, 1.0, 3).unwrap();
+        assert_eq!(s[0].y, Some(-1.0));
+        assert_eq!(s[1].y, None);
+        assert_eq!(s[2].y, Some(1.0));
+    }
+
+    #[test]
+    fn sample_function_clamps_sample_count_and_rejects_bad_domain() {
+        let node = parse("x").unwrap();
+        assert_eq!(sample_function(&node, "x", 0.0, 1.0, 0).unwrap().len(), 2);
+        assert_eq!(
+            sample_function(&node, "x", 0.0, 1.0, 99_999).unwrap().len(),
+            MAX_CURVE_SAMPLES as usize
+        );
+        assert!(matches!(
+            sample_function(&node, "x", 1.0, 1.0, 10),
+            Err(MathError::Domain(_))
+        ));
+        assert!(matches!(
+            sample_function(&node, "x", f64::NAN, 1.0, 10),
+            Err(MathError::Domain(_))
+        ));
     }
 
     #[test]

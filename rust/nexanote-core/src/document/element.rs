@@ -141,6 +141,29 @@ pub struct Formula {
     pub ast: Option<FormulaNode>,
 }
 
+/// Gráfica de una función `y = f(var)` sobre un dominio `[x_min, x_max]`.
+///
+/// El muestreo numérico de la curva **no** se guarda en el modelo: lo calcula la
+/// capa de *render* ([`crate::document::render`]) a partir del AST, de forma
+/// eficiente y fuera del hilo de UI. Aquí sólo vive la definición.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Graph {
+    /// Fuente de la función, en el dialecto ASCII/LaTeX del motor matemático.
+    pub expression: String,
+    /// AST tipado de la función; `None` mientras sólo se tenga la fuente.
+    pub ast: Option<FormulaNode>,
+    /// Nombre de la variable independiente (normalmente `"x"`).
+    pub var: String,
+    /// Marco de la gráfica en la página (px lógicos @1x): esquina + tamaño.
+    pub frame: Rect,
+    /// Extremo inferior del dominio.
+    pub x_min: f64,
+    /// Extremo superior del dominio.
+    pub x_max: f64,
+    /// Número de puntos a muestrear en `[x_min, x_max]`.
+    pub samples: u32,
+}
+
 /// Tipo de forma geométrica.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ShapeKind {
@@ -171,6 +194,7 @@ pub enum ElementKind {
     Text(TextBox),
     Formula(Formula),
     Shape(Shape),
+    Graph(Graph),
 }
 
 /// Elemento identificable dentro de una página.
@@ -198,6 +222,7 @@ impl Element {
             ElementKind::Text(_) => "Text",
             ElementKind::Formula(_) => "Formula",
             ElementKind::Shape(_) => "Shape",
+            ElementKind::Graph(_) => "Graph",
         }
     }
 }
@@ -239,6 +264,16 @@ impl Transformable for Formula {
     }
 }
 
+impl Transformable for Graph {
+    fn translate(&mut self, dx: f32, dy: f32) {
+        self.frame.translate(dx, dy);
+    }
+
+    fn scale(&mut self, factor: f32, origin: Point) {
+        self.frame.scale(factor, origin);
+    }
+}
+
 impl Transformable for Shape {
     fn translate(&mut self, dx: f32, dy: f32) {
         self.bounds.translate(dx, dy);
@@ -257,6 +292,7 @@ impl Transformable for Element {
             ElementKind::Text(t) => t.translate(dx, dy),
             ElementKind::Formula(fm) => fm.translate(dx, dy),
             ElementKind::Shape(sh) => sh.translate(dx, dy),
+            ElementKind::Graph(g) => g.translate(dx, dy),
         }
     }
 
@@ -266,6 +302,7 @@ impl Transformable for Element {
             ElementKind::Text(t) => t.scale(factor, origin),
             ElementKind::Formula(fm) => fm.scale(factor, origin),
             ElementKind::Shape(sh) => sh.scale(factor, origin),
+            ElementKind::Graph(g) => g.scale(factor, origin),
         }
     }
 }

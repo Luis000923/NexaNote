@@ -23,7 +23,7 @@ pub mod page;
 pub mod render;
 
 pub use element::{
-    BinaryOp, Element, ElementKind, Formula, FormulaNode, MathFunc, Shape, ShapeKind, Stroke,
+    BinaryOp, Element, ElementKind, Formula, FormulaNode, Graph, MathFunc, Shape, ShapeKind, Stroke,
     StrokePoint, TextBox, TextStyle,
 };
 pub use error::{DocResult, DocumentError};

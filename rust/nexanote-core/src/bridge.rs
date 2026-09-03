@@ -205,6 +205,25 @@ pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentAddFormula<'l
     run_api(&mut env, api::add_formula(&doc, &page_id, &formula))
 }
 
+/// `external fun documentAddGraph(documentJson: String, pageId: String, graphJson: String): String`
+///
+/// Inserta una gráfica de función `y = f(var)` sobre un dominio. El núcleo parsea
+/// la función a un AST y valida marco, dominio y símbolos; el muestreo numérico de
+/// la curva ocurre al construir la escena, nunca en el hilo de UI.
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentAddGraph<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    document_json: JString<'local>,
+    page_id: JString<'local>,
+    graph_json: JString<'local>,
+) -> jstring {
+    let doc = read_string(&mut env, &document_json);
+    let page_id = read_string(&mut env, &page_id);
+    let graph = read_string(&mut env, &graph_json);
+    run_api(&mut env, api::add_graph(&doc, &page_id, &graph))
+}
+
 /// `external fun documentRemoveElement(documentJson: String, pageId: String, elementId: String): String`
 #[no_mangle]
 pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentRemoveElement<'local>(

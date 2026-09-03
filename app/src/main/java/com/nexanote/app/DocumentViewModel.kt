@@ -3,6 +3,7 @@ package com.nexanote.app
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nexanote.app.canvas.FormulaInput
+import com.nexanote.app.canvas.GraphInput
 import com.nexanote.app.canvas.SampleDocument
 import com.nexanote.app.canvas.SceneParser
 import com.nexanote.app.canvas.ScenePage
@@ -168,6 +169,30 @@ class DocumentViewModel(
                 runCatching {
                     val formulaJson = FormulaInput.toFormulaJson(expression, x, y)
                     val updated = core.documentAddFormula(doc, page, formulaJson)
+                    updated to SceneParser.parse(core.documentRenderPage(updated, 0))
+                }
+            }.onSuccess { (updated, scene) ->
+                documentJson = updated
+                _state.value = SceneUiState.Ready(scene)
+            }
+        }
+    }
+
+    /**
+     * Persiste una gráfica de función creada en el lienzo. `(x, y)` es la esquina
+     * superior izquierda del marco en coordenadas del documento. Como
+     * [commitStroke], la serialización, la llamada FFI y el muestreo de la curva
+     * (que hace el núcleo al renderizar) van fuera del hilo principal; una entrada
+     * inválida se ignora y un fallo del núcleo deja la escena actual intacta.
+     */
+    fun commitGraph(x: Float, y: Float, expression: String, xMin: Double, xMax: Double) {
+        val doc = documentJson ?: return
+        val page = pageId ?: return
+        viewModelScope.launch {
+            withContext(Dispatchers.Default) {
+                runCatching {
+                    val graphJson = GraphInput.toGraphJson(expression, xMin, xMax, x, y)
+                    val updated = core.documentAddGraph(doc, page, graphJson)
                     updated to SceneParser.parse(core.documentRenderPage(updated, 0))
                 }
             }.onSuccess { (updated, scene) ->

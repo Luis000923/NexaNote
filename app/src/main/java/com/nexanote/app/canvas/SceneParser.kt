@@ -101,6 +101,32 @@ object SceneParser {
             value = if (o.isNull("value")) null else o.getDouble("value"),
         )
 
+        "Graph" -> ScenePrimitive.Graph(
+            topLeft = Offset(o.f("x"), o.f("y")),
+            size = Size(o.f("width"), o.f("height")),
+            expression = o.getString("expression"),
+            color = color(o.getJSONObject("color")),
+            gridX = o.getJSONArray("grid_x").let { a -> buildList(a.length()) { for (i in 0 until a.length()) add(a.getDouble(i).toFloat()) } },
+            gridY = o.getJSONArray("grid_y").let { a -> buildList(a.length()) { for (i in 0 until a.length()) add(a.getDouble(i).toFloat()) } },
+            axisX = if (o.isNull("axis_x")) null else o.getDouble("axis_x").toFloat(),
+            axisY = if (o.isNull("axis_y")) null else o.getDouble("axis_y").toFloat(),
+            polylines = o.getJSONArray("polylines").let { segs ->
+                buildList(segs.length()) {
+                    for (i in 0 until segs.length()) {
+                        val seg = segs.getJSONArray(i)
+                        add(
+                            buildList(seg.length()) {
+                                for (j in 0 until seg.length()) {
+                                    val p = seg.getJSONObject(j)
+                                    add(Offset(p.getDouble("x").toFloat(), p.getDouble("y").toFloat()))
+                                }
+                            },
+                        )
+                    }
+                }
+            },
+        )
+
         else -> throw IllegalArgumentException("primitiva desconocida: $type")
     }
 
