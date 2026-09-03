@@ -26,7 +26,11 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 en modo full: shrinking + ofuscacion + optimizacion. El puente
+            // JNI (com.nexanote.core.NativeBridge) queda protegido por las reglas
+            // -keep de proguard-rules.pro para evitar UnsatisfiedLinkError.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
