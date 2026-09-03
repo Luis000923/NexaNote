@@ -51,13 +51,26 @@ object SampleDocument {
         """{"type":"Formula","latex":"e^{i\\pi} + 1 = 0","position":{"x":150.0,"y":175.0},"ast":null}""",
     )
 
-    fun buildScene(core: NativeCore, title: String = "Documento de ejemplo"): ScenePage {
+    /** Documento de ejemplo ya construido en el núcleo: su JSON y el id de su página. */
+    data class LoadedDocument(val documentJson: String, val pageId: String)
+
+    /**
+     * Construye el documento de ejemplo **en el núcleo Rust** y devuelve su estado
+     * (JSON + id de página), para que la capa de UI pueda seguir editándolo
+     * (p. ej. añadir trazos del stylus).
+     */
+    fun buildDocument(core: NativeCore, title: String = "Documento de ejemplo"): LoadedDocument {
         var doc = core.documentCreate(title)
         doc = core.documentAddPage(doc, PAGE_SPEC)
         val pageId = JSONObject(doc).getJSONArray("pages").getJSONObject(0).getString("id")
         for (element in ELEMENTS) {
             doc = core.documentAddElement(doc, pageId, element)
         }
-        return SceneParser.parse(core.documentRenderPage(doc, 0))
+        return LoadedDocument(doc, pageId)
+    }
+
+    fun buildScene(core: NativeCore, title: String = "Documento de ejemplo"): ScenePage {
+        val loaded = buildDocument(core, title)
+        return SceneParser.parse(core.documentRenderPage(loaded.documentJson, 0))
     }
 }

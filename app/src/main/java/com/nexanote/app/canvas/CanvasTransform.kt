@@ -43,6 +43,15 @@ data class CanvasTransform(
     fun modelToScreen(mx: Float, my: Float): Pair<Float, Float> =
         (mx * scale + offsetX) to (my * scale + offsetY)
 
+    /**
+     * Inversa de [modelToScreen]: proyecta un punto en píxeles de pantalla al
+     * espacio del documento. Se usa para convertir los eventos del stylus (que
+     * llegan en coordenadas de pantalla) a coordenadas del modelo antes de
+     * enviarlos al núcleo.
+     */
+    fun screenToModel(sx: Float, sy: Float): Pair<Float, Float> =
+        ((sx - offsetX) / scale) to ((sy - offsetY) / scale)
+
     companion object {
         const val MIN_SCALE = 0.1f
         const val MAX_SCALE = 8f

@@ -1,10 +1,13 @@
 package com.nexanote.app
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.nexanote.app.canvas.CanvasTransform
 import com.nexanote.app.canvas.SampleDocument
 import com.nexanote.app.canvas.SceneParser
 import com.nexanote.app.canvas.ScenePrimitive
 import com.nexanote.app.canvas.SceneTemplate
+import com.nexanote.app.canvas.StrokeColor
+import com.nexanote.app.canvas.StrokeGesture
 import com.nexanote.core.NativeBridge
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
@@ -72,6 +75,78 @@ class DocumentRenderBridgeTest {
         assertTrue("Polyline" in kinds)
         assertTrue("Text" in kinds)
         assertTrue("Formula" in kinds)
+    }
+
+    @Test
+    fun stylusStrokeIsCapturedProjectedAndPersistedInRust() {
+        var doc = NativeBridge.documentCreate("Trazo")
+        doc = NativeBridge.documentAddPage(
+            doc,
+            """{"size":{"format":"A4"},"template":{"kind":"Blank"}}""",
+        )
+        val pageId = JSONObject(doc).getJSONArray("pages").getJSONObject(0).getString("id")
+
+        // Gesto simulado: puntos de pantalla -> espacio de documento (identidad).
+        val gesture = StrokeGesture(CanvasTransform(), startUptimeMs = 0L)
+        gesture.addScreenPoint(10f, 10f, 0.4f, 0L)
+        gesture.addScreenPoint(20f, 30f, 0.9f, 16L)
+        gesture.addScreenPoint(40f, 25f, 2.0f, 32L) // presión fuera de rango -> se satura
+
+        val strokeJson = StrokeGesture.buildStrokeJson(
+            gesture.samples, StrokeColor.Ink, StrokeGesture.DEFAULT_WIDTH,
+        )
+        doc = NativeBridge.documentAddStroke(doc, pageId, strokeJson)
+
+        val scene = SceneParser.parse(NativeBridge.documentRenderPage(doc, 0))
+        val polyline = scene.primitives.filterIsInstance<ScenePrimitive.Polyline>().single()
+        assertEquals(3, polyline.points.size)
+        assertEquals(40f, polyline.points[2].x, 1e-3f)
+        assertEquals(25f, polyline.points[2].y, 1e-3f)
+        assertEquals(StrokeGesture.DEFAULT_WIDTH, polyline.width, 1e-3f)
+    }
+
+    @Test
+    fun emptyStrokeRaisesControlledErrorInsteadOfCrashing() {
+        var doc = NativeBridge.documentCreate("x")
+        doc = NativeBridge.documentAddPage(doc, "{}")
+        val pageId = JSONObject(doc).getJSONArray("pages").getJSONObject(0).getString("id")
+        try {
+            NativeBridge.documentAddStroke(
+                doc,
+                pageId,
+                """{"points":[],"color":{"r":0,"g":0,"b":0,"a":255},"width":3.0}""",
+            )
+            throw AssertionError("esperaba IllegalStateException")
+        } catch (expected: IllegalStateException) {
+            // ok: el núcleo rechaza el trazo sin puntos como error controlado.
+        }
+    }
+
+    @Test
+    fun viewModelCommitsStrokeAndRepublishesScene() = runBlocking {
+        val vm = DocumentViewModel(core = NativeBridge, bridgeAvailable = true)
+        val ready = vm.buildState()
+        assertTrue(ready is SceneUiState.Ready)
+        ready as SceneUiState.Ready
+        val before = ready.scene.primitives.count { it is ScenePrimitive.Polyline }
+
+        vm.commitStroke(
+            listOf(
+                com.nexanote.app.canvas.StrokeSample(60f, 60f, 0.5f, 0L),
+                com.nexanote.app.canvas.StrokeSample(120f, 90f, 0.7f, 16L),
+            ),
+        )
+        // commitStroke lanza una corrutina; se le da tiempo a completarse.
+        var after = before
+        repeat(50) {
+            val s = vm.state.value
+            if (s is SceneUiState.Ready) {
+                after = s.scene.primitives.count { it is ScenePrimitive.Polyline }
+            }
+            if (after > before) return@repeat
+            Thread.sleep(20)
+        }
+        assertEquals(before + 1, after)
     }
 
     @Test

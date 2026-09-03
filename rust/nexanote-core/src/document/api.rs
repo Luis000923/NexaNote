@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::element::ElementKind;
+use super::element::{ElementKind, Stroke};
 use super::error::{DocResult, DocumentError};
 use super::model::Document;
 use super::page::{PageSize, PageTemplate};
@@ -78,6 +78,54 @@ pub fn add_element(document_json: &str, page_id: &str, element_json: &str) -> Do
     let kind: ElementKind = parse(element_json, "element")?;
     doc.page_mut(id)?.add_element(kind);
     doc.to_json()
+}
+
+/// Grosor mínimo (unidades lógicas) para que un trazo sea visible al pintarse.
+const MIN_STROKE_WIDTH: f32 = 0.5;
+
+/// Inserta un **trazo a mano alzada** en la página `page_id`.
+///
+/// `stroke_json` es un [`Stroke`] serializado (`points`, `color`, `width`), tal
+/// como lo captura la capa de stylus. Antes de insertarlo, el núcleo lo **sanea**
+/// -- es la única autoridad sobre la validez del trazo, de modo que la UI se
+/// limita a capturar puntos en alta frecuencia sin decidir nada:
+///
+///  - descarta muestras con coordenadas no finitas;
+///  - exige al menos un punto válido (si no, [`DocumentError::InvalidArgument`]);
+///  - satura la presión de cada muestra a `[0.0, 1.0]` (`0.5` si no es finita);
+///  - eleva el grosor a [`MIN_STROKE_WIDTH`] si viene por debajo o no es finito.
+///
+/// Devuelve el documento actualizado.
+pub fn add_stroke(document_json: &str, page_id: &str, stroke_json: &str) -> DocResult<String> {
+    let mut doc = Document::from_json(document_json)?;
+    let id = page_id.parse()?;
+    let raw: Stroke = parse(stroke_json, "stroke")?;
+    let stroke = sanitize_stroke(raw)?;
+    doc.page_mut(id)?.add_element(ElementKind::Stroke(stroke));
+    doc.to_json()
+}
+
+/// Aplica las reglas de validez de un trazo capturado. Ver [`add_stroke`].
+fn sanitize_stroke(mut stroke: Stroke) -> DocResult<Stroke> {
+    stroke
+        .points
+        .retain(|p| p.position.x.is_finite() && p.position.y.is_finite());
+    if stroke.points.is_empty() {
+        return Err(DocumentError::InvalidArgument(
+            "un trazo necesita al menos un punto válido".to_string(),
+        ));
+    }
+    for p in &mut stroke.points {
+        p.pressure = if p.pressure.is_finite() {
+            p.pressure.clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+    }
+    if !stroke.width.is_finite() || stroke.width < MIN_STROKE_WIDTH {
+        stroke.width = MIN_STROKE_WIDTH;
+    }
+    Ok(stroke)
 }
 
 /// Elimina el elemento `element_id` de la página `page_id`. Devuelve el documento
@@ -199,6 +247,78 @@ mod tests {
         let json = serde_json::to_value(&parsed.pages[0].elements[0]).unwrap();
         assert_eq!(json["kind"]["bounds"]["x"], 5.0);
         assert_eq!(json["kind"]["bounds"]["y"], 7.0);
+    }
+
+    fn doc_with_blank_page() -> (String, String) {
+        let doc = create_document("trazos").unwrap();
+        let doc = add_page(&doc, "{}").unwrap();
+        let page_id = Document::from_json(&doc).unwrap().pages[0].id.to_string();
+        (doc, page_id)
+    }
+
+    #[test]
+    fn add_stroke_inserts_stroke_and_clamps_pressure() {
+        let (doc, page_id) = doc_with_blank_page();
+        let stroke = r#"{"points":[
+            {"position":{"x":1.0,"y":2.0},"pressure":0.4,"timestamp_ms":0},
+            {"position":{"x":3.0,"y":4.0},"pressure":2.5,"timestamp_ms":16}],
+            "color":{"r":10,"g":20,"b":30,"a":255},"width":3.0}"#;
+        let doc = add_stroke(&doc, &page_id, stroke).unwrap();
+
+        let parsed = Document::from_json(&doc).unwrap();
+        match &parsed.pages[0].elements[0].kind {
+            ElementKind::Stroke(s) => {
+                assert_eq!(s.points.len(), 2);
+                assert_eq!(s.points[1].pressure, 1.0);
+                assert_eq!(s.points[0].timestamp_ms, 0);
+            }
+            other => panic!("esperaba Stroke, no {other:?}"),
+        }
+    }
+
+    #[test]
+    fn add_stroke_drops_non_finite_points_and_rejects_empty() {
+        let (doc, page_id) = doc_with_blank_page();
+        // Todas las muestras son no finitas -> no queda ningún punto.
+        let stroke = r#"{"points":[
+            {"position":{"x":null,"y":2.0},"pressure":0.4,"timestamp_ms":0}],
+            "color":{"r":0,"g":0,"b":0,"a":255},"width":3.0}"#;
+        // `null` no es un f32 válido: fallo de serialización controlado.
+        assert!(matches!(
+            add_stroke(&doc, &page_id, stroke),
+            Err(DocumentError::Serialization(_))
+        ));
+
+        let empty = r#"{"points":[],"color":{"r":0,"g":0,"b":0,"a":255},"width":3.0}"#;
+        assert!(matches!(
+            add_stroke(&doc, &page_id, empty),
+            Err(DocumentError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn add_stroke_raises_min_width() {
+        let (doc, page_id) = doc_with_blank_page();
+        let stroke = r#"{"points":[
+            {"position":{"x":0.0,"y":0.0},"pressure":0.5,"timestamp_ms":0}],
+            "color":{"r":0,"g":0,"b":0,"a":255},"width":0.0}"#;
+        let doc = add_stroke(&doc, &page_id, stroke).unwrap();
+        let parsed = Document::from_json(&doc).unwrap();
+        if let ElementKind::Stroke(s) = &parsed.pages[0].elements[0].kind {
+            assert_eq!(s.width, MIN_STROKE_WIDTH);
+        } else {
+            panic!("esperaba Stroke");
+        }
+    }
+
+    #[test]
+    fn add_stroke_to_missing_page_errors() {
+        let (doc, _) = doc_with_blank_page();
+        let stroke = r#"{"points":[
+            {"position":{"x":0.0,"y":0.0},"pressure":0.5,"timestamp_ms":0}],
+            "color":{"r":0,"g":0,"b":0,"a":255},"width":2.0}"#;
+        let err = add_stroke(&doc, "00000000000000000000000000000009", stroke).unwrap_err();
+        assert!(matches!(err, DocumentError::PageNotFound(_)));
     }
 
     #[test]

@@ -2,9 +2,16 @@ package com.nexanote.app.canvas
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
@@ -12,10 +19,12 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -23,11 +32,14 @@ import kotlin.math.sin
 
 /**
  * Lienzo de documento: pinta una [ScenePage] (producida por el núcleo Rust) en un
- * `Canvas` de Compose, con zoom y desplazamiento por gestos.
+ * `Canvas` de Compose, con zoom y desplazamiento por gestos y **captura de trazos
+ * a mano alzada** con el stylus o el dedo (Fase 4).
  *
  * Rendimiento: el `Path` de fondo se calcula una vez por tamaño de viewport; el
  * dibujo de primitivas es directo sobre el `DrawScope` sin asignaciones en el
- * bucle salvo las estrictamente necesarias.
+ * bucle salvo las estrictamente necesarias. La captura de puntos del stylus sólo
+ * hace una proyección afín por muestra; la serialización y el envío al núcleo
+ * ocurren fuera del hilo principal, tras levantar el lápiz.
  */
 @Composable
 fun DocumentCanvas(
@@ -35,7 +47,14 @@ fun DocumentCanvas(
     transform: CanvasTransform,
     onTransformChange: (CanvasTransform) -> Unit,
     modifier: Modifier = Modifier,
+    tool: DrawingTool = DrawingTool.Pen,
+    onStrokeCommit: (List<StrokeSample>) -> Unit = {},
 ) {
+    // Trazo en curso (coordenadas del documento). Se conserva pintado hasta que
+    // llega la nueva escena del núcleo que ya lo incluye: así no hay parpadeo.
+    val active = remember { ActiveStroke() }
+    LaunchedEffect(scene) { active.clear() }
+
     Canvas(
         modifier = modifier
             .fillMaxSize()
@@ -47,16 +66,111 @@ fun DocumentCanvas(
                         transform.applyGesture(pan.x, pan.y, zoom, centroid.x, centroid.y),
                     )
                 }
+            }
+            .pointerInput(scene.pageId, tool, transform) {
+                if (tool != DrawingTool.Pen) return@pointerInput
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val gesture = StrokeGesture(transform, down.uptimeMillis)
+                    active.begin()
+                    recordSample(gesture, active, transform, down)
+                    down.consume()
+
+                    var cancelled = false
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        // Un segundo puntero: es un gesto de navegación, no de
+                        // escritura. Se cancela el trazo y se cede a zoom/pan.
+                        if (event.changes.size > 1) {
+                            cancelled = true
+                            break
+                        }
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        recordSample(gesture, active, transform, change)
+                        val lifted = !change.pressed
+                        change.consume()
+                        if (lifted) break
+                    }
+
+                    if (cancelled || !gesture.isDrawable) {
+                        active.clear()
+                    } else {
+                        onStrokeCommit(gesture.samples)
+                    }
+                }
             },
     ) {
+        val revision = active.revision // suscribe el redibujado al trazo activo
         withTransform({
             translate(transform.offsetX, transform.offsetY)
             scale(transform.scale, transform.scale, Offset.Zero)
         }) {
             drawPageBackground(scene)
             scene.primitives.forEach { drawPrimitive(it) }
+            if (revision >= 0) drawActiveStroke(active.points)
         }
     }
+}
+
+/**
+ * Estado mutable del trazo en curso. Los puntos son una lista plana (sin overhead
+ * de `SnapshotStateList`); un contador de revisión, ese sí observable, dispara el
+ * redibujado del `Canvas` en cada muestra nueva para lograr baja latencia.
+ */
+private class ActiveStroke {
+    val points = ArrayList<Offset>(256)
+
+    var revision by mutableIntStateOf(0)
+        private set
+
+    fun begin() {
+        points.clear()
+        revision++
+    }
+
+    fun add(point: Offset) {
+        points.add(point)
+        revision++
+    }
+
+    fun clear() {
+        if (points.isEmpty()) return
+        points.clear()
+        revision++
+    }
+}
+
+/** Registra la muestra actual del puntero en el trazo en curso. */
+private fun recordSample(
+    gesture: StrokeGesture,
+    active: ActiveStroke,
+    transform: CanvasTransform,
+    change: PointerInputChange,
+) {
+    gesture.addScreenPoint(change.position.x, change.position.y, change.pressure, change.uptimeMillis)
+    active.add(modelPoint(transform, change.position))
+}
+
+private fun modelPoint(transform: CanvasTransform, screen: Offset): Offset {
+    val (x, y) = transform.screenToModel(screen.x, screen.y)
+    return Offset(x, y)
+}
+
+private fun DrawScope.drawActiveStroke(points: List<Offset>) {
+    if (points.size < 2) return
+    val path = Path().apply {
+        moveTo(points[0].x, points[0].y)
+        for (i in 1 until points.size) lineTo(points[i].x, points[i].y)
+    }
+    drawPath(
+        path = path,
+        color = Color(0xFF141821),
+        style = Stroke(
+            width = StrokeGesture.DEFAULT_WIDTH,
+            cap = StrokeCap.Round,
+            join = StrokeJoin.Round,
+        ),
+    )
 }
 
 private fun DrawScope.drawPageBackground(scene: ScenePage) {

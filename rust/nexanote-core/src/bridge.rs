@@ -131,6 +131,24 @@ pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentAddElement<'l
     run_api(&mut env, api::add_element(&doc, &page_id, &element))
 }
 
+/// `external fun documentAddStroke(documentJson: String, pageId: String, strokeJson: String): String`
+///
+/// Inserta un trazo a mano alzada (capturado por el stylus) en la página dada. El
+/// núcleo sanea los puntos, la presión y el grosor antes de persistirlo.
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentAddStroke<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    document_json: JString<'local>,
+    page_id: JString<'local>,
+    stroke_json: JString<'local>,
+) -> jstring {
+    let doc = read_string(&mut env, &document_json);
+    let page_id = read_string(&mut env, &page_id);
+    let stroke = read_string(&mut env, &stroke_json);
+    run_api(&mut env, api::add_stroke(&doc, &page_id, &stroke))
+}
+
 /// `external fun documentRemoveElement(documentJson: String, pageId: String, elementId: String): String`
 #[no_mangle]
 pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentRemoveElement<'local>(

@@ -3,7 +3,11 @@ package com.nexanote.app
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nexanote.app.canvas.SampleDocument
+import com.nexanote.app.canvas.SceneParser
 import com.nexanote.app.canvas.ScenePage
+import com.nexanote.app.canvas.StrokeColor
+import com.nexanote.app.canvas.StrokeGesture
+import com.nexanote.app.canvas.StrokeSample
 import com.nexanote.core.NativeBridge
 import com.nexanote.core.NativeCore
 import kotlinx.coroutines.Dispatchers
@@ -22,11 +26,12 @@ sealed interface SceneUiState {
 
 /**
  * ViewModel de la pantalla de documento. No contiene lógica de dominio: pide al
- * núcleo Rust (a través de [NativeCore]) que construya el documento de ejemplo y
- * devuelva su escena de render, y expone el resultado como estado de UI.
+ * núcleo Rust (a través de [NativeCore]) que construya el documento de ejemplo,
+ * conserva su JSON y le añade los trazos que captura el lienzo, devolviendo cada
+ * vez la escena de render.
  *
- * El trabajo del puente se hace en [Dispatchers.Default], nunca en el hilo
- * principal.
+ * Todo el trabajo del puente (serialización de trazos incluida) se hace en
+ * [Dispatchers.Default], nunca en el hilo principal.
  */
 class DocumentViewModel(
     private val core: NativeCore = NativeBridge,
@@ -39,6 +44,13 @@ class DocumentViewModel(
     private val _state = MutableStateFlow<SceneUiState>(SceneUiState.Loading)
     val state: StateFlow<SceneUiState> = _state.asStateFlow()
 
+    /** Estado del documento vivo en el núcleo. `@Volatile`: se toca desde varias corrutinas. */
+    @Volatile
+    private var documentJson: String? = null
+
+    @Volatile
+    private var pageId: String? = null
+
     init {
         reload()
     }
@@ -48,15 +60,45 @@ class DocumentViewModel(
         viewModelScope.launch { _state.value = buildState() }
     }
 
-    /** Construye el estado de forma síncrona-suspendida; reutilizable en tests. */
+    /** Construye el estado inicial de forma síncrona-suspendida; reutilizable en tests. */
     suspend fun buildState(): SceneUiState = withContext(Dispatchers.Default) {
         if (!bridgeAvailable) {
             return@withContext SceneUiState.Error("El núcleo nativo no está disponible")
         }
-        runCatching { SampleDocument.buildScene(core) }
-            .fold(
-                onSuccess = { SceneUiState.Ready(it) },
-                onFailure = { SceneUiState.Error(it.message ?: it.javaClass.simpleName) },
-            )
+        runCatching {
+            val loaded = SampleDocument.buildDocument(core)
+            documentJson = loaded.documentJson
+            pageId = loaded.pageId
+            SceneParser.parse(core.documentRenderPage(loaded.documentJson, 0))
+        }.fold(
+            onSuccess = { SceneUiState.Ready(it) },
+            onFailure = { SceneUiState.Error(it.message ?: it.javaClass.simpleName) },
+        )
+    }
+
+    /**
+     * Persiste un trazo capturado por el lienzo en el núcleo Rust y publica la
+     * escena re-renderizada. La serialización y la llamada FFI van fuera del hilo
+     * principal; un fallo del núcleo deja la escena actual intacta.
+     */
+    fun commitStroke(samples: List<StrokeSample>) {
+        if (samples.isEmpty()) return
+        val doc = documentJson ?: return
+        val page = pageId ?: return
+        val snapshot = samples.toList()
+        viewModelScope.launch {
+            withContext(Dispatchers.Default) {
+                runCatching {
+                    val strokeJson = StrokeGesture.buildStrokeJson(
+                        snapshot, StrokeColor.Ink, StrokeGesture.DEFAULT_WIDTH,
+                    )
+                    val updated = core.documentAddStroke(doc, page, strokeJson)
+                    updated to SceneParser.parse(core.documentRenderPage(updated, 0))
+                }
+            }.onSuccess { (updated, scene) ->
+                documentJson = updated
+                _state.value = SceneUiState.Ready(scene)
+            }
+        }
     }
 }

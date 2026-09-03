@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nexanote.app.canvas.CanvasTransform
 import com.nexanote.app.canvas.DocumentCanvas
+import com.nexanote.app.canvas.DrawingTool
 import com.nexanote.app.canvas.NexaIcons
 
 /**
@@ -66,16 +67,23 @@ fun DocumentScreen(viewModel: DocumentViewModel = viewModel()) {
                             ),
                         )
                     }
+                    var tool by remember { mutableStateOf(DrawingTool.Pen) }
                     DocumentCanvas(
                         scene = s.scene,
                         transform = transform,
                         onTransformChange = { transform = it },
+                        tool = tool,
+                        onStrokeCommit = viewModel::commitStroke,
                         modifier = Modifier.fillMaxSize(),
                     )
                     CanvasControls(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(16.dp),
+                        tool = tool,
+                        onToggleTool = {
+                            tool = if (tool == DrawingTool.Pen) DrawingTool.Pan else DrawingTool.Pen
+                        },
                         onZoomIn = { transform = transform.zoomBy(1.25f, 500f, 800f) },
                         onZoomOut = { transform = transform.zoomBy(0.8f, 500f, 800f) },
                         onFit = {
@@ -94,6 +102,8 @@ fun DocumentScreen(viewModel: DocumentViewModel = viewModel()) {
 @Composable
 private fun CanvasControls(
     modifier: Modifier,
+    tool: DrawingTool,
+    onToggleTool: () -> Unit,
     onZoomIn: () -> Unit,
     onZoomOut: () -> Unit,
     onFit: () -> Unit,
@@ -103,6 +113,10 @@ private fun CanvasControls(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        when (tool) {
+            DrawingTool.Pen -> ControlButton(NexaIcons.Pen, "Herramienta: lápiz (toca para navegar)", onToggleTool)
+            DrawingTool.Pan -> ControlButton(NexaIcons.Hand, "Herramienta: navegación (toca para escribir)", onToggleTool)
+        }
         ControlButton(NexaIcons.ZoomIn, "Acercar", onZoomIn)
         ControlButton(NexaIcons.ZoomOut, "Alejar", onZoomOut)
         ControlButton(NexaIcons.FitScreen, "Ajustar a pantalla", onFit)

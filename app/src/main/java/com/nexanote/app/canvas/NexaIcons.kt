@@ -120,6 +120,65 @@ object NexaIcons {
         }
     }
 
+    /** Herramienta de escritura/dibujo (punta de lápiz). */
+    val Pen: ImageVector by lazy {
+        vector("nexa_pen") {
+            moveTo(3f, 17.25f)
+            verticalLineTo(21f)
+            horizontalLineToRelative(3.75f)
+            lineTo(17.81f, 9.94f)
+            lineToRelative(-3.75f, -3.75f)
+            lineTo(3f, 17.25f)
+            close()
+            moveTo(20.71f, 7.04f)
+            curveToRelative(0.39f, -0.39f, 0.39f, -1.02f, 0f, -1.41f)
+            lineToRelative(-2.34f, -2.34f)
+            curveToRelative(-0.39f, -0.39f, -1.02f, -0.39f, -1.41f, 0f)
+            lineToRelative(-1.83f, 1.83f)
+            lineToRelative(3.75f, 3.75f)
+            lineToRelative(1.83f, -1.83f)
+            close()
+        }
+    }
+
+    /** Herramienta de navegación (mover el lienzo en las cuatro direcciones). */
+    val Hand: ImageVector by lazy {
+        vector("nexa_pan") {
+            moveTo(10f, 9f)
+            horizontalLineToRelative(4f)
+            verticalLineTo(6f)
+            horizontalLineToRelative(3f)
+            lineToRelative(-5f, -5f)
+            lineToRelative(-5f, 5f)
+            horizontalLineToRelative(3f)
+            close()
+            moveTo(9f, 10f)
+            horizontalLineTo(6f)
+            verticalLineTo(7f)
+            lineToRelative(-5f, 5f)
+            lineToRelative(5f, 5f)
+            verticalLineToRelative(-3f)
+            horizontalLineToRelative(3f)
+            close()
+            moveTo(23f, 12f)
+            lineToRelative(-5f, -5f)
+            verticalLineToRelative(3f)
+            horizontalLineToRelative(-3f)
+            verticalLineToRelative(4f)
+            horizontalLineToRelative(3f)
+            verticalLineToRelative(3f)
+            close()
+            moveTo(14f, 15f)
+            horizontalLineToRelative(-4f)
+            verticalLineToRelative(3f)
+            horizontalLineTo(7f)
+            lineToRelative(5f, 5f)
+            lineToRelative(5f, -5f)
+            horizontalLineToRelative(-3f)
+            close()
+        }
+    }
+
     val Refresh: ImageVector by lazy {
         vector("nexa_refresh") {
             moveTo(17.65f, 6.35f)

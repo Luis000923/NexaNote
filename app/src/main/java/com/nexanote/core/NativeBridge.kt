@@ -41,6 +41,12 @@ object NativeBridge : NativeCore {
         elementJson: String,
     ): String
 
+    external override fun documentAddStroke(
+        documentJson: String,
+        pageId: String,
+        strokeJson: String,
+    ): String
+
     external override fun documentRemoveElement(
         documentJson: String,
         pageId: String,
@@ -83,6 +89,15 @@ interface NativeCore {
      * Devuelve el documento actualizado.
      */
     fun documentAddElement(documentJson: String, pageId: String, elementJson: String): String
+
+    /**
+     * Inserta un **trazo a mano alzada** (capturado por el stylus) en la página
+     * [pageId]. [strokeJson] es un `Stroke` serializado
+     * (`{"points":[{"position":{"x","y"},"pressure","timestamp_ms"}],"color":{...},"width"}`).
+     * El núcleo Rust sanea puntos, presión y grosor. Devuelve el documento
+     * actualizado.
+     */
+    fun documentAddStroke(documentJson: String, pageId: String, strokeJson: String): String
 
     /** Elimina el elemento [elementId] de la página [pageId]. */
     fun documentRemoveElement(documentJson: String, pageId: String, elementId: String): String
