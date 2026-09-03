@@ -68,6 +68,7 @@ class DocumentHistoryTest {
         override fun documentAddText(documentJson: String, pageId: String, textJson: String) = unsupported()
         override fun documentAddFormula(documentJson: String, pageId: String, formulaJson: String) = unsupported()
         override fun documentAddGraph(documentJson: String, pageId: String, graphJson: String) = unsupported()
+        override fun documentAddImage(documentJson: String, pageId: String, imageJson: String) = unsupported()
         override fun documentRemoveElement(documentJson: String, pageId: String, elementId: String) = unsupported()
         override fun documentTranslatePageElements(documentJson: String, pageId: String, dx: Float, dy: Float) = unsupported()
         override fun documentSummary(documentJson: String) = unsupported()

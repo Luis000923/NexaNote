@@ -71,6 +71,12 @@ object NativeBridge : NativeCore {
         graphJson: String,
     ): String
 
+    external override fun documentAddImage(
+        documentJson: String,
+        pageId: String,
+        imageJson: String,
+    ): String
+
     external override fun documentRemoveElement(
         documentJson: String,
         pageId: String,
@@ -175,6 +181,16 @@ interface NativeCore {
      * Devuelve el documento actualizado.
      */
     fun documentAddGraph(documentJson: String, pageId: String, graphJson: String): String
+
+    /**
+     * Inserta una **imagen** en la página [pageId]. [imageJson] es
+     * `{"source":"images/x.png","position":{"x":..,"y":..},"width":..,"height":..,"natural_width":..,"natural_height":..}`.
+     * La imagen debe haberse copiado antes al almacén local de la app; [source] es
+     * una ruta **relativa** a ese almacén. El núcleo Rust rechaza rutas absolutas
+     * o con travesía (`..`), marcos degenerados y dimensiones intrínsecas no
+     * positivas como [IllegalStateException]. Devuelve el documento actualizado.
+     */
+    fun documentAddImage(documentJson: String, pageId: String, imageJson: String): String
 
     /** Elimina el elemento [elementId] de la página [pageId]. */
     fun documentRemoveElement(documentJson: String, pageId: String, elementId: String): String

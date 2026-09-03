@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nexanote.app.canvas.FormulaInput
 import com.nexanote.app.canvas.GraphInput
+import com.nexanote.app.canvas.ImageInput
 import com.nexanote.app.canvas.SampleDocument
 import com.nexanote.app.canvas.SceneParser
 import com.nexanote.app.canvas.ScenePage
@@ -160,6 +161,23 @@ class DocumentViewModel(
         val doc = documentJson ?: return
         val page = pageId ?: return
         edit { core.documentAddGraph(doc, page, GraphInput.toGraphJson(expression, xMin, xMax, x, y)) }
+    }
+
+    /**
+     * Inserta en el lienzo una imagen ya importada al almacén local por
+     * [ImageImporter]. El marco inicial conserva la proporción del bitmap. La
+     * validación final (ruta relativa, marco sensato) la hace el núcleo Rust.
+     */
+    fun commitImage(x: Float, y: Float, image: ImportedImage) {
+        if (!ImageInput.isCommittable(image.source)) return
+        val doc = documentJson ?: return
+        val page = pageId ?: return
+        val natW = image.naturalWidth.toFloat()
+        val natH = image.naturalHeight.toFloat()
+        val (w, h) = ImageInput.fitFrame(natW, natH)
+        edit {
+            core.documentAddImage(doc, page, ImageInput.toImageJson(image.source, x, y, w, h, natW, natH))
+        }
     }
 
     /** Deshace la última edición confirmada. Instantáneo: el núcleo no re-ejecuta lógica. */

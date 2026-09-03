@@ -307,6 +307,35 @@ object NexaIcons {
         }
     }
 
+    /** Herramienta de imagen: marco con un sol y una silueta de montaña. */
+    val Image: ImageVector by lazy {
+        vector("nexa_image", PathFillType.EvenOdd) {
+            // Marco (anillo rectangular).
+            moveTo(3f, 5f)
+            lineTo(21f, 5f)
+            lineTo(21f, 19f)
+            lineTo(3f, 19f)
+            close()
+            moveTo(5f, 7f)
+            lineTo(19f, 7f)
+            lineTo(19f, 17f)
+            lineTo(5f, 17f)
+            close()
+            // Sol.
+            moveTo(8f, 10.5f)
+            arcToRelative(1.7f, 1.7f, 0f, isMoreThanHalf = true, isPositiveArc = true, 3.4f, 0f)
+            arcToRelative(1.7f, 1.7f, 0f, isMoreThanHalf = true, isPositiveArc = true, -3.4f, 0f)
+            close()
+            // Montaña.
+            moveTo(6f, 16f)
+            lineTo(11f, 10.5f)
+            lineTo(14.5f, 14f)
+            lineTo(16f, 12.5f)
+            lineTo(18f, 16f)
+            close()
+        }
+    }
+
     /** Deshacer: flecha curva que gira a la izquierda. */
     val Undo: ImageVector by lazy {
         vector("nexa_undo") {

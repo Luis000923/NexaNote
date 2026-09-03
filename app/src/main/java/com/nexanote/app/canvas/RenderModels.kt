@@ -103,4 +103,17 @@ sealed interface ScenePrimitive {
         /** Tramos continuos de la curva; cada hueco de la función parte la lista. */
         val polylines: List<List<Offset>>,
     ) : ScenePrimitive
+
+    /**
+     * Imagen rasterizada: marco de destino en coordenadas de página (px lógicos
+     * @1x) y ruta relativa del recurso en el almacén local de la app. El bitmap se
+     * decodifica fuera del hilo de dibujo (ver `ImageImporter`).
+     */
+    data class Image(
+        val topLeft: Offset,
+        val size: androidx.compose.ui.geometry.Size,
+        val source: String,
+        val naturalWidth: Float,
+        val naturalHeight: Float,
+    ) : ScenePrimitive
 }

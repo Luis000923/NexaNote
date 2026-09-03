@@ -1,8 +1,11 @@
 package com.nexanote.app
 
+import android.graphics.Bitmap
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.nexanote.app.canvas.CanvasTransform
 import com.nexanote.app.canvas.FormulaInput
+import com.nexanote.app.canvas.ImageInput
 import com.nexanote.app.canvas.SampleDocument
 import com.nexanote.app.canvas.SceneParser
 import com.nexanote.app.canvas.ScenePrimitive
@@ -317,4 +320,86 @@ class DocumentRenderBridgeTest {
         val vm = DocumentViewModel(core = NativeBridge, bridgeAvailable = false)
         assertTrue(vm.buildState() is SceneUiState.Error)
     }
+
+    @Test
+    fun imageIsInsertedAndRenderedAsPrimitiveByRust() {
+        var doc = NativeBridge.documentCreate("Imágenes")
+        doc = NativeBridge.documentAddPage(doc, "{}")
+        val pageId = JSONObject(doc).getJSONArray("pages").getJSONObject(0).getString("id")
+
+        doc = NativeBridge.documentAddImage(
+            doc,
+            pageId,
+            ImageInput.toImageJson("images/pic.png", 12f, 34f, 180f, 120f, 900f, 600f),
+        )
+
+        val image = SceneParser.parse(NativeBridge.documentRenderPage(doc, 0))
+            .primitives.filterIsInstance<ScenePrimitive.Image>().single()
+        assertEquals("images/pic.png", image.source)
+        assertEquals(180f, image.size.width, 1e-3f)
+        assertEquals(34f, image.topLeft.y, 1e-3f)
+    }
+
+    @Test
+    fun invalidImagePathRaisesControlledErrorInsteadOfCrashing() {
+        var doc = NativeBridge.documentCreate("x")
+        doc = NativeBridge.documentAddPage(doc, "{}")
+        val pageId = JSONObject(doc).getJSONArray("pages").getJSONObject(0).getString("id")
+        try {
+            NativeBridge.documentAddImage(
+                doc,
+                pageId,
+                ImageInput.toImageJson("/sdcard/x.png", 0f, 0f, 40f, 40f, 10f, 10f),
+            )
+            throw AssertionError("esperaba IllegalStateException")
+        } catch (expected: IllegalStateException) {
+            // ok: el núcleo rechaza rutas absolutas.
+        }
+    }
+
+    @Test
+    fun viewModelImportsImageIntoLocalStoreAndRepublishesScene() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        // Simula una imagen ya copiada al almacén local por ImageImporter.
+        val dir = ImageImporter.imagesDir(context).apply { mkdirs() }
+        val file = java.io.File(dir, "vm-test-${System.nanoTime()}.png")
+        Bitmap.createBitmap(48, 32, Bitmap.Config.ARGB_8888).use { bmp ->
+            file.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        }
+        val imported = ImportedImage("images/${file.name}", 48, 32)
+
+        val vm = DocumentViewModel(core = NativeBridge, bridgeAvailable = true)
+        val ready = vm.buildState() as SceneUiState.Ready
+        val before = ready.scene.primitives.count { it is ScenePrimitive.Image }
+
+        vm.commitImage(80f, 90f, imported)
+
+        var after = before
+        repeat(50) {
+            (vm.state.value as? SceneUiState.Ready)?.let {
+                after = it.scene.primitives.count { p -> p is ScenePrimitive.Image }
+            }
+            if (after > before) return@repeat
+            Thread.sleep(20)
+        }
+        file.delete()
+        assertEquals(before + 1, after)
+    }
+
+    @Test
+    fun viewModelIgnoresImageWithNonRelativeSource() = runBlocking {
+        val vm = DocumentViewModel(core = NativeBridge, bridgeAvailable = true)
+        val ready = vm.buildState() as SceneUiState.Ready
+        val before = ready.scene.primitives.count { it is ScenePrimitive.Image }
+
+        vm.commitImage(0f, 0f, ImportedImage("/etc/passwd", 10, 10))
+
+        Thread.sleep(200)
+        val after = (vm.state.value as SceneUiState.Ready)
+            .scene.primitives.count { it is ScenePrimitive.Image }
+        assertEquals(before, after)
+    }
+
+    private inline fun <R> Bitmap.use(block: (Bitmap) -> R): R =
+        try { block(this) } finally { recycle() }
 }

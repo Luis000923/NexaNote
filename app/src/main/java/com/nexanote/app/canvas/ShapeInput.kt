@@ -16,7 +16,8 @@ fun DrawingTool.asShapeKind(): ShapeKind? = when (this) {
     DrawingTool.Ellipse -> ShapeKind.Ellipse
     DrawingTool.Line -> ShapeKind.Line
     DrawingTool.Arrow -> ShapeKind.Arrow
-    DrawingTool.Pen, DrawingTool.Pan, DrawingTool.Text, DrawingTool.Formula, DrawingTool.Graph -> null
+    DrawingTool.Pen, DrawingTool.Pan, DrawingTool.Text, DrawingTool.Formula, DrawingTool.Graph,
+    DrawingTool.Image -> null
 }
 
 /**

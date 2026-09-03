@@ -18,6 +18,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -28,8 +29,11 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
@@ -56,6 +60,9 @@ fun DocumentCanvas(
     onTextRequest: (Float, Float) -> Unit = { _, _ -> },
     onFormulaRequest: (Float, Float) -> Unit = { _, _ -> },
     onGraphRequest: (Float, Float) -> Unit = { _, _ -> },
+    onImageRequest: (Float, Float) -> Unit = { _, _ -> },
+    /** Resuelve la ruta relativa de una imagen a su bitmap ya decodificado, o `null` si aún no está listo. */
+    imageProvider: (String) -> ImageBitmap? = { null },
 ) {
     // Trazo / forma en curso (coordenadas del documento). Se conservan pintados
     // hasta que llega la nueva escena del núcleo que ya los incluye: sin parpadeo.
@@ -105,6 +112,12 @@ fun DocumentCanvas(
                             onGraphRequest(mx, my)
                         }
 
+                    tool == DrawingTool.Image ->
+                        detectTapGestures { pos ->
+                            val (mx, my) = transform.screenToModel(pos.x, pos.y)
+                            onImageRequest(mx, my)
+                        }
+
                     else -> Unit // DrawingTool.Pan: sólo navega (transform gestures).
                 }
             },
@@ -116,7 +129,7 @@ fun DocumentCanvas(
             scale(transform.scale, transform.scale, Offset.Zero)
         }) {
             drawPageBackground(scene)
-            scene.primitives.forEach { drawPrimitive(it) }
+            scene.primitives.forEach { drawPrimitive(it, imageProvider) }
             if (strokeRevision >= 0) drawActiveStroke(active.points)
             if (shapeRevision >= 0) drawActiveShape(activeShape)
         }
@@ -377,7 +390,10 @@ private fun DrawScope.drawPageBackground(scene: ScenePage) {
     drawRect(Color(0xFF9AA6B2), size = Size(w, h), style = Stroke(width = 1f))
 }
 
-private fun DrawScope.drawPrimitive(p: ScenePrimitive) {
+private fun DrawScope.drawPrimitive(
+    p: ScenePrimitive,
+    imageProvider: (String) -> ImageBitmap? = { null },
+) {
     when (p) {
         is ScenePrimitive.Polyline -> {
             if (p.points.size >= 2) {
@@ -424,7 +440,34 @@ private fun DrawScope.drawPrimitive(p: ScenePrimitive) {
         }
 
         is ScenePrimitive.Graph -> drawGraph(p)
+
+        is ScenePrimitive.Image -> drawImagePrimitive(p, imageProvider(p.source))
     }
+}
+
+/**
+ * Pinta una imagen en su marco. Mientras el bitmap se decodifica fuera del hilo
+ * de UI ([ImageBitmap] `null`), muestra un marcador de posición con las diagonales
+ * del encuadre.
+ */
+private fun DrawScope.drawImagePrimitive(p: ScenePrimitive.Image, bitmap: ImageBitmap?) {
+    if (bitmap != null && p.size.width > 0f && p.size.height > 0f) {
+        drawImage(
+            image = bitmap,
+            srcOffset = IntOffset.Zero,
+            srcSize = IntSize(bitmap.width, bitmap.height),
+            dstOffset = IntOffset(p.topLeft.x.roundToInt(), p.topLeft.y.roundToInt()),
+            dstSize = IntSize(p.size.width.roundToInt(), p.size.height.roundToInt()),
+        )
+    } else {
+        drawRect(Color(0xFFEEF1F5), topLeft = p.topLeft, size = p.size)
+        val br = Offset(p.topLeft.x + p.size.width, p.topLeft.y + p.size.height)
+        val tr = Offset(p.topLeft.x + p.size.width, p.topLeft.y)
+        val bl = Offset(p.topLeft.x, p.topLeft.y + p.size.height)
+        drawLine(Color(0xFF9AA6B2), p.topLeft, br, strokeWidth = 1f)
+        drawLine(Color(0xFF9AA6B2), tr, bl, strokeWidth = 1f)
+    }
+    drawRect(Color(0xFF9AA6B2), topLeft = p.topLeft, size = p.size, style = Stroke(width = 1.2f))
 }
 
 /** Pinta una gráfica de función: fondo, cuadrícula, ejes cartesianos y la curva. */

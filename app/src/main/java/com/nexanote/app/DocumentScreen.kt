@@ -1,5 +1,7 @@
 package com.nexanote.app
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,15 +21,21 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nexanote.app.canvas.CanvasTransform
 import com.nexanote.app.canvas.DocumentCanvas
@@ -97,6 +105,46 @@ fun DocumentScreen(viewModel: DocumentViewModel = viewModel()) {
                     var pendingGraph by remember(s.scene.pageId) {
                         mutableStateOf<Pair<Float, Float>?>(null)
                     }
+                    // Esquina (coords del documento) donde colocar una imagen aún por elegir.
+                    var pendingImage by remember(s.scene.pageId) {
+                        mutableStateOf<Pair<Float, Float>?>(null)
+                    }
+
+                    val context = LocalContext.current
+                    val scope = rememberCoroutineScope()
+
+                    // Caché de bitmaps por ruta relativa: se decodifican fuera del hilo de UI
+                    // y se piden una sola vez por página.
+                    val imageCache = remember(s.scene.pageId) {
+                        mutableStateMapOf<String, ImageBitmap?>()
+                    }
+                    val imageProvider: (String) -> ImageBitmap? = provider@{ source ->
+                        if (!imageCache.containsKey(source)) {
+                            imageCache[source] = null
+                            scope.launch {
+                                ImageImporter.loadBitmap(context, source)?.let { imageCache[source] = it }
+                            }
+                        }
+                        imageCache[source]
+                    }
+
+                    val imagePicker = rememberLauncherForActivityResult(
+                        ActivityResultContracts.GetContent(),
+                    ) { uri ->
+                        val pos = pendingImage
+                        pendingImage = null
+                        if (uri != null && pos != null) {
+                            scope.launch {
+                                ImageImporter.importFromUri(context, uri)?.let {
+                                    viewModel.commitImage(pos.first, pos.second, it)
+                                }
+                            }
+                        }
+                    }
+                    LaunchedEffect(pendingImage) {
+                        if (pendingImage != null) imagePicker.launch("image/*")
+                    }
+
                     DocumentCanvas(
                         scene = s.scene,
                         transform = transform,
@@ -107,6 +155,8 @@ fun DocumentScreen(viewModel: DocumentViewModel = viewModel()) {
                         onTextRequest = { x, y -> pendingText = x to y },
                         onFormulaRequest = { x, y -> pendingFormula = x to y },
                         onGraphRequest = { x, y -> pendingGraph = x to y },
+                        onImageRequest = { x, y -> pendingImage = x to y },
+                        imageProvider = imageProvider,
                         modifier = Modifier.fillMaxSize(),
                     )
                     pendingText?.let { (x, y) ->
@@ -176,6 +226,7 @@ private val TOOLS: List<Pair<DrawingTool, Pair<ImageVector, String>>> = listOf(
     DrawingTool.Text to (NexaIcons.TextTool to "Texto"),
     DrawingTool.Formula to (NexaIcons.Formula to "Fórmula matemática"),
     DrawingTool.Graph to (NexaIcons.GraphTool to "Gráfica de función"),
+    DrawingTool.Image to (NexaIcons.Image to "Imagen"),
     DrawingTool.Pan to (NexaIcons.Hand to "Navegación"),
 )
 

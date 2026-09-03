@@ -129,6 +129,18 @@ pub enum ScenePrimitive {
         /// Tramos continuos de la curva; se rompe en cada hueco de la función.
         polylines: Vec<Vec<ScenePoint>>,
     },
+    /// Imagen rasterizada: marco de destino en píxeles de página y ruta relativa
+    /// del recurso local. La UI decodifica el bitmap fuera del hilo de dibujo.
+    Image {
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        /// Ruta relativa al almacén de activos de la app.
+        source: String,
+        natural_width: f32,
+        natural_height: f32,
+    },
 }
 
 /// Escena completa de una página.
@@ -190,6 +202,15 @@ fn element_to_primitive(el: &Element) -> ScenePrimitive {
                 .and_then(|ast| super::math::evaluate(ast, &std::collections::HashMap::new()).ok()),
         },
         ElementKind::Graph(g) => graph_to_primitive(g),
+        ElementKind::Image(im) => ScenePrimitive::Image {
+            x: im.frame.x,
+            y: im.frame.y,
+            width: im.frame.width,
+            height: im.frame.height,
+            source: im.source.clone(),
+            natural_width: im.natural_width,
+            natural_height: im.natural_height,
+        },
         ElementKind::Shape(sh) => {
             let b = sh.bounds;
             match sh.kind {
@@ -541,6 +562,23 @@ mod tests {
                 assert!(polylines.len() >= 2, "la curva debe partirse en x = 0");
             }
             other => panic!("esperaba Graph, no {other:?}"),
+        }
+    }
+
+    #[test]
+    fn image_becomes_primitive_with_frame_in_pixels() {
+        let (doc, page_id) = doc_with_grid_page();
+        let spec = r#"{"source":"images/pic.png","position":{"x":12.0,"y":34.0},
+            "width":180.0,"height":120.0,"natural_width":900.0,"natural_height":600.0}"#;
+        let doc = api::add_image(&doc, &page_id, spec).unwrap();
+        let scene = build_scene(&doc, 0).unwrap();
+        match &scene.primitives[0] {
+            ScenePrimitive::Image { x, y, width, height, source, natural_width, .. } => {
+                assert_eq!((*x, *y, *width, *height), (12.0, 34.0, 180.0, 120.0));
+                assert_eq!(source, "images/pic.png");
+                assert_eq!(*natural_width, 900.0);
+            }
+            other => panic!("esperaba Image, no {other:?}"),
         }
     }
 

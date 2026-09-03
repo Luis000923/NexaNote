@@ -186,6 +186,24 @@ pub struct Shape {
     pub stroke_width: f32,
 }
 
+/// Imagen rasterizada importada por el usuario y **copiada al almacenamiento local
+/// del documento** para portabilidad offline-first (nunca se depende de una ruta
+/// externa efímera).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImageRef {
+    /// Ruta del recurso **relativa** al directorio de activos de la app
+    /// (p. ej. `images/9f3c….png`). Nunca una ruta absoluta ni externa.
+    pub source: String,
+    /// Marco de la imagen en la página (esquina superior-izquierda + tamaño), en
+    /// px lógicos @1x.
+    pub frame: Rect,
+    /// Anchura intrínseca del bitmap de origen en px; conserva la proporción al
+    /// re-encuadrar o escalar.
+    pub natural_width: f32,
+    /// Altura intrínseca del bitmap de origen en px.
+    pub natural_height: f32,
+}
+
 /// Contenido concreto de un elemento.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -195,6 +213,7 @@ pub enum ElementKind {
     Formula(Formula),
     Shape(Shape),
     Graph(Graph),
+    Image(ImageRef),
 }
 
 /// Elemento identificable dentro de una página.
@@ -223,6 +242,7 @@ impl Element {
             ElementKind::Formula(_) => "Formula",
             ElementKind::Shape(_) => "Shape",
             ElementKind::Graph(_) => "Graph",
+            ElementKind::Image(_) => "Image",
         }
     }
 }
@@ -285,6 +305,16 @@ impl Transformable for Shape {
     }
 }
 
+impl Transformable for ImageRef {
+    fn translate(&mut self, dx: f32, dy: f32) {
+        self.frame.translate(dx, dy);
+    }
+
+    fn scale(&mut self, factor: f32, origin: Point) {
+        self.frame.scale(factor, origin);
+    }
+}
+
 impl Transformable for Element {
     fn translate(&mut self, dx: f32, dy: f32) {
         match &mut self.kind {
@@ -293,6 +323,7 @@ impl Transformable for Element {
             ElementKind::Formula(fm) => fm.translate(dx, dy),
             ElementKind::Shape(sh) => sh.translate(dx, dy),
             ElementKind::Graph(g) => g.translate(dx, dy),
+            ElementKind::Image(im) => im.translate(dx, dy),
         }
     }
 
@@ -303,6 +334,7 @@ impl Transformable for Element {
             ElementKind::Formula(fm) => fm.scale(factor, origin),
             ElementKind::Shape(sh) => sh.scale(factor, origin),
             ElementKind::Graph(g) => g.scale(factor, origin),
+            ElementKind::Image(im) => im.scale(factor, origin),
         }
     }
 }
@@ -364,6 +396,30 @@ mod tests {
         let json = serde_json::to_string(&el).unwrap();
         let back: Element = serde_json::from_str(&json).unwrap();
         assert_eq!(back, el);
+    }
+
+    #[test]
+    fn image_roundtrips_json_and_transforms_frame() {
+        let mut el = Element::new(
+            ElementKind::Image(ImageRef {
+                source: "images/foo.png".to_string(),
+                frame: Rect::new(10.0, 20.0, 100.0, 80.0),
+                natural_width: 640.0,
+                natural_height: 512.0,
+            }),
+            3,
+        );
+        let json = serde_json::to_string(&el).unwrap();
+        assert_eq!(serde_json::from_str::<Element>(&json).unwrap(), el);
+
+        el.translate(5.0, 7.0);
+        el.scale(2.0, Point::ORIGIN);
+        if let ElementKind::Image(im) = &el.kind {
+            assert_eq!(im.frame, Rect::new(30.0, 54.0, 200.0, 160.0));
+            assert_eq!(im.source, "images/foo.png");
+        } else {
+            panic!("tipo inesperado");
+        }
     }
 
     #[test]

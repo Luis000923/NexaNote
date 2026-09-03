@@ -7,7 +7,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::element::{ElementKind, Formula, Graph, Shape, ShapeKind, Stroke, TextBox};
+use super::element::{
+    ElementKind, Formula, Graph, ImageRef, Shape, ShapeKind, Stroke, TextBox,
+};
 use super::error::{DocResult, DocumentError};
 use super::geometry::Point;
 use super::math;
@@ -433,6 +435,111 @@ pub fn add_graph(document_json: &str, page_id: &str, graph_json: &str) -> DocRes
     };
     doc.page_mut(id)?.add_element(ElementKind::Graph(graph));
     doc.to_json()
+}
+
+/// Longitud máxima (caracteres Unicode) de la ruta de un recurso de imagen.
+const MAX_IMAGE_SOURCE_LEN: usize = 512;
+
+/// Extensión mínima (px lógicos) de un lado del marco de una imagen.
+const MIN_IMAGE_EXTENT: f32 = 8.0;
+
+/// Extensión máxima (px lógicos) de un lado del marco de una imagen: cota
+/// defensiva contra encuadres absurdos.
+const MAX_IMAGE_EXTENT: f32 = 20_000.0;
+
+/// Especificación de entrada para insertar una imagen ya copiada al almacén local.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImageSpec {
+    /// Ruta **relativa** al almacén de activos de la app (`images/…`).
+    source: String,
+    /// Esquina superior-izquierda del marco en la página (px lógicos @1x).
+    position: Point,
+    width: f32,
+    height: f32,
+    natural_width: f32,
+    natural_height: f32,
+}
+
+/// Inserta una **imagen** en la página `page_id`.
+///
+/// `image_json` es un [`ImageSpec`] serializado
+/// (`{"source":"images/x.png","position":{"x":..,"y":..},"width":..,"height":..,"natural_width":..,"natural_height":..}`).
+/// El núcleo es la única autoridad sobre la validez y la **sanea**:
+///
+///  - recorta la ruta y exige que no quede vacía ni supere [`MAX_IMAGE_SOURCE_LEN`];
+///  - exige una ruta **relativa** al almacén del documento: rechaza rutas
+///    absolutas, unidades (`C:`) y segmentos `..` (portabilidad offline-first,
+///    sin dependencias de rutas externas efímeras);
+///  - exige posición y tamaño finitos, y un marco entre [`MIN_IMAGE_EXTENT`] y
+///    [`MAX_IMAGE_EXTENT`] px por lado;
+///  - exige dimensiones intrínsecas positivas y finitas.
+///
+/// Devuelve el documento actualizado.
+pub fn add_image(document_json: &str, page_id: &str, image_json: &str) -> DocResult<String> {
+    let mut doc = Document::from_json(document_json)?;
+    let id = page_id.parse()?;
+    let spec: ImageSpec = parse(image_json, "image")?;
+    let image = sanitize_image(spec)?;
+    doc.page_mut(id)?.add_element(ElementKind::Image(image));
+    doc.to_json()
+}
+
+/// Aplica las reglas de validez de una imagen importada. Ver [`add_image`].
+fn sanitize_image(spec: ImageSpec) -> DocResult<ImageRef> {
+    let source = spec.source.trim();
+    if source.is_empty() {
+        return Err(DocumentError::InvalidArgument(
+            "una imagen necesita una ruta de recurso no vacía".to_string(),
+        ));
+    }
+    if source.chars().count() > MAX_IMAGE_SOURCE_LEN {
+        return Err(DocumentError::InvalidArgument(format!(
+            "la ruta de la imagen supera {MAX_IMAGE_SOURCE_LEN} caracteres"
+        )));
+    }
+    if source.starts_with('/')
+        || source.starts_with('\\')
+        || source.contains(':')
+        || source.split(['/', '\\']).any(|seg| seg == "..")
+    {
+        return Err(DocumentError::InvalidArgument(
+            "la ruta de la imagen debe ser relativa al almacén del documento".to_string(),
+        ));
+    }
+    if !(spec.position.x.is_finite()
+        && spec.position.y.is_finite()
+        && spec.width.is_finite()
+        && spec.height.is_finite())
+    {
+        return Err(DocumentError::InvalidArgument(
+            "la posición y el tamaño de la imagen deben ser finitos".to_string(),
+        ));
+    }
+    if spec.width < MIN_IMAGE_EXTENT || spec.height < MIN_IMAGE_EXTENT {
+        return Err(DocumentError::InvalidArgument(format!(
+            "el marco de la imagen debe medir al menos {MIN_IMAGE_EXTENT} px por lado"
+        )));
+    }
+    if spec.width > MAX_IMAGE_EXTENT || spec.height > MAX_IMAGE_EXTENT {
+        return Err(DocumentError::InvalidArgument(format!(
+            "el marco de la imagen no puede superar {MAX_IMAGE_EXTENT} px por lado"
+        )));
+    }
+    if !(spec.natural_width.is_finite() && spec.natural_height.is_finite())
+        || spec.natural_width <= 0.0
+        || spec.natural_height <= 0.0
+    {
+        return Err(DocumentError::InvalidArgument(
+            "las dimensiones intrínsecas de la imagen deben ser positivas y finitas".to_string(),
+        ));
+    }
+    Ok(ImageRef {
+        source: source.to_string(),
+        frame: super::geometry::Rect::new(spec.position.x, spec.position.y, spec.width, spec.height),
+        natural_width: spec.natural_width,
+        natural_height: spec.natural_height,
+    })
 }
 
 /// Elimina el elemento `element_id` de la página `page_id`. Devuelve el documento
@@ -909,6 +1016,66 @@ mod tests {
         let spec = r#"{"expression":"x","position":{"x":0.0,"y":0.0},
             "width":100.0,"height":100.0,"x_min":-1.0,"x_max":1.0}"#;
         let err = add_graph(&doc, "00000000000000000000000000000009", spec).unwrap_err();
+        assert!(matches!(err, DocumentError::PageNotFound(_)));
+    }
+
+    #[test]
+    fn add_image_inserts_and_keeps_natural_dimensions() {
+        let (doc, page_id) = doc_with_blank_page();
+        let spec = r#"{"source":"images/photo.png","position":{"x":15.0,"y":25.0},
+            "width":200.0,"height":150.0,"natural_width":1600.0,"natural_height":1200.0}"#;
+        let doc = add_image(&doc, &page_id, spec).unwrap();
+
+        let parsed = Document::from_json(&doc).unwrap();
+        match &parsed.pages[0].elements[0].kind {
+            ElementKind::Image(im) => {
+                assert_eq!(im.source, "images/photo.png");
+                assert_eq!((im.frame.x, im.frame.y), (15.0, 25.0));
+                assert_eq!((im.frame.width, im.frame.height), (200.0, 150.0));
+                assert_eq!((im.natural_width, im.natural_height), (1600.0, 1200.0));
+            }
+            other => panic!("esperaba Image, no {other:?}"),
+        }
+    }
+
+    #[test]
+    fn add_image_rejects_absolute_and_traversing_paths() {
+        let (doc, page_id) = doc_with_blank_page();
+        for bad in [
+            r#"{"source":"/sdcard/x.png","position":{"x":0.0,"y":0.0},"width":50.0,"height":50.0,"natural_width":10.0,"natural_height":10.0}"#,
+            r#"{"source":"images/../../secret.png","position":{"x":0.0,"y":0.0},"width":50.0,"height":50.0,"natural_width":10.0,"natural_height":10.0}"#,
+            r#"{"source":"C:\\pics\\x.png","position":{"x":0.0,"y":0.0},"width":50.0,"height":50.0,"natural_width":10.0,"natural_height":10.0}"#,
+        ] {
+            assert!(matches!(
+                add_image(&doc, &page_id, bad),
+                Err(DocumentError::InvalidArgument(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn add_image_rejects_tiny_frame_and_bad_natural_dimensions() {
+        let (doc, page_id) = doc_with_blank_page();
+        let tiny = r#"{"source":"images/x.png","position":{"x":0.0,"y":0.0},
+            "width":4.0,"height":4.0,"natural_width":10.0,"natural_height":10.0}"#;
+        assert!(matches!(
+            add_image(&doc, &page_id, tiny),
+            Err(DocumentError::InvalidArgument(_))
+        ));
+        let bad_natural = r#"{"source":"images/x.png","position":{"x":0.0,"y":0.0},
+            "width":40.0,"height":40.0,"natural_width":0.0,"natural_height":10.0}"#;
+        assert!(matches!(
+            add_image(&doc, &page_id, bad_natural),
+            Err(DocumentError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn add_image_to_missing_page_errors() {
+        let (doc, _) = doc_with_blank_page();
+        let spec = r#"{"source":"images/x.png","position":{"x":0.0,"y":0.0},
+            "width":40.0,"height":40.0,"natural_width":10.0,"natural_height":10.0}"#;
+        let err = add_image(&doc, "00000000000000000000000000000009", spec).unwrap_err();
         assert!(matches!(err, DocumentError::PageNotFound(_)));
     }
 

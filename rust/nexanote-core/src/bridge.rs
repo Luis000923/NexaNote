@@ -224,6 +224,25 @@ pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentAddGraph<'loc
     run_api(&mut env, api::add_graph(&doc, &page_id, &graph))
 }
 
+/// `external fun documentAddImage(documentJson: String, pageId: String, imageJson: String): String`
+///
+/// Inserta una imagen (ya copiada al almacén local de la app) en la página dada.
+/// El núcleo valida que la ruta sea relativa y sin travesía, y que el marco y las
+/// dimensiones intrínsecas sean sensatos, antes de persistirla.
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentAddImage<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    document_json: JString<'local>,
+    page_id: JString<'local>,
+    image_json: JString<'local>,
+) -> jstring {
+    let doc = read_string(&mut env, &document_json);
+    let page_id = read_string(&mut env, &page_id);
+    let image = read_string(&mut env, &image_json);
+    run_api(&mut env, api::add_image(&doc, &page_id, &image))
+}
+
 /// `external fun documentRemoveElement(documentJson: String, pageId: String, elementId: String): String`
 #[no_mangle]
 pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentRemoveElement<'local>(

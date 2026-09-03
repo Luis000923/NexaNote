@@ -127,6 +127,14 @@ object SceneParser {
             },
         )
 
+        "Image" -> ScenePrimitive.Image(
+            topLeft = Offset(o.f("x"), o.f("y")),
+            size = Size(o.f("width"), o.f("height")),
+            source = o.getString("source"),
+            naturalWidth = o.f("natural_width"),
+            naturalHeight = o.f("natural_height"),
+        )
+
         else -> throw IllegalArgumentException("primitiva desconocida: $type")
     }
 
