@@ -5,6 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.nexanote.app.canvas.SampleDocument
 import com.nexanote.app.canvas.SceneParser
 import com.nexanote.app.canvas.ScenePage
+import com.nexanote.app.canvas.ShapeBounds
+import com.nexanote.app.canvas.ShapeGeometry
+import com.nexanote.app.canvas.ShapeKind
 import com.nexanote.app.canvas.StrokeColor
 import com.nexanote.app.canvas.StrokeGesture
 import com.nexanote.app.canvas.StrokeSample
@@ -93,6 +96,28 @@ class DocumentViewModel(
                         snapshot, StrokeColor.Ink, StrokeGesture.DEFAULT_WIDTH,
                     )
                     val updated = core.documentAddStroke(doc, page, strokeJson)
+                    updated to SceneParser.parse(core.documentRenderPage(updated, 0))
+                }
+            }.onSuccess { (updated, scene) ->
+                documentJson = updated
+                _state.value = SceneUiState.Ready(scene)
+            }
+        }
+    }
+
+    /**
+     * Persiste una forma geométrica dibujada en el lienzo. Como [commitStroke], la
+     * serialización y la llamada FFI van fuera del hilo principal y un fallo del
+     * núcleo (p. ej. forma degenerada) deja la escena actual intacta.
+     */
+    fun commitShape(kind: ShapeKind, bounds: ShapeBounds) {
+        val doc = documentJson ?: return
+        val page = pageId ?: return
+        viewModelScope.launch {
+            withContext(Dispatchers.Default) {
+                runCatching {
+                    val shapeJson = ShapeGeometry.toShapeJson(kind, bounds)
+                    val updated = core.documentAddShape(doc, page, shapeJson)
                     updated to SceneParser.parse(core.documentRenderPage(updated, 0))
                 }
             }.onSuccess { (updated, scene) ->

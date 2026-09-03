@@ -149,6 +149,24 @@ pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentAddStroke<'lo
     run_api(&mut env, api::add_stroke(&doc, &page_id, &stroke))
 }
 
+/// `external fun documentAddShape(documentJson: String, pageId: String, shapeJson: String): String`
+///
+/// Inserta una forma geométrica (`Rectangle`, `Ellipse`, `Line`, `Arrow`) en la
+/// página dada. El núcleo normaliza y valida los límites antes de persistirla.
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentAddShape<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    document_json: JString<'local>,
+    page_id: JString<'local>,
+    shape_json: JString<'local>,
+) -> jstring {
+    let doc = read_string(&mut env, &document_json);
+    let page_id = read_string(&mut env, &page_id);
+    let shape = read_string(&mut env, &shape_json);
+    run_api(&mut env, api::add_shape(&doc, &page_id, &shape))
+}
+
 /// `external fun documentRemoveElement(documentJson: String, pageId: String, elementId: String): String`
 #[no_mangle]
 pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentRemoveElement<'local>(

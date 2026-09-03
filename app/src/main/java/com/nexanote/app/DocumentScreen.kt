@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -74,16 +75,20 @@ fun DocumentScreen(viewModel: DocumentViewModel = viewModel()) {
                         onTransformChange = { transform = it },
                         tool = tool,
                         onStrokeCommit = viewModel::commitStroke,
+                        onShapeCommit = viewModel::commitShape,
                         modifier = Modifier.fillMaxSize(),
+                    )
+                    ToolPalette(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(16.dp),
+                        selected = tool,
+                        onSelect = { tool = it },
                     )
                     CanvasControls(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(16.dp),
-                        tool = tool,
-                        onToggleTool = {
-                            tool = if (tool == DrawingTool.Pen) DrawingTool.Pan else DrawingTool.Pen
-                        },
                         onZoomIn = { transform = transform.zoomBy(1.25f, 500f, 800f) },
                         onZoomOut = { transform = transform.zoomBy(0.8f, 500f, 800f) },
                         onFit = {
@@ -99,11 +104,59 @@ fun DocumentScreen(viewModel: DocumentViewModel = viewModel()) {
     }
 }
 
+/** Herramientas disponibles, en el orden de la barra. */
+private val TOOLS: List<Pair<DrawingTool, Pair<ImageVector, String>>> = listOf(
+    DrawingTool.Pen to (NexaIcons.Pen to "Lápiz (mano alzada)"),
+    DrawingTool.Line to (NexaIcons.ShapeLine to "Línea"),
+    DrawingTool.Rectangle to (NexaIcons.ShapeRectangle to "Rectángulo"),
+    DrawingTool.Ellipse to (NexaIcons.ShapeEllipse to "Elipse"),
+    DrawingTool.Arrow to (NexaIcons.ShapeArrow to "Flecha"),
+    DrawingTool.Pan to (NexaIcons.Hand to "Navegación"),
+)
+
+@Composable
+private fun ToolPalette(
+    modifier: Modifier,
+    selected: DrawingTool,
+    onSelect: (DrawingTool) -> Unit,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        for ((tool, iconAndLabel) in TOOLS) {
+            val (icon, label) = iconAndLabel
+            ToolButton(
+                icon = icon,
+                description = label,
+                selected = tool == selected,
+                onClick = { onSelect(tool) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ToolButton(
+    icon: ImageVector,
+    description: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    if (selected) {
+        FilledIconButton(onClick = onClick) {
+            Icon(imageVector = icon, contentDescription = "$description (activa)")
+        }
+    } else {
+        FilledTonalIconButton(onClick = onClick) {
+            Icon(imageVector = icon, contentDescription = description)
+        }
+    }
+}
+
 @Composable
 private fun CanvasControls(
     modifier: Modifier,
-    tool: DrawingTool,
-    onToggleTool: () -> Unit,
     onZoomIn: () -> Unit,
     onZoomOut: () -> Unit,
     onFit: () -> Unit,
@@ -113,10 +166,6 @@ private fun CanvasControls(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        when (tool) {
-            DrawingTool.Pen -> ControlButton(NexaIcons.Pen, "Herramienta: lápiz (toca para navegar)", onToggleTool)
-            DrawingTool.Pan -> ControlButton(NexaIcons.Hand, "Herramienta: navegación (toca para escribir)", onToggleTool)
-        }
         ControlButton(NexaIcons.ZoomIn, "Acercar", onZoomIn)
         ControlButton(NexaIcons.ZoomOut, "Alejar", onZoomOut)
         ControlButton(NexaIcons.FitScreen, "Ajustar a pantalla", onFit)

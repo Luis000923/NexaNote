@@ -47,6 +47,12 @@ object NativeBridge : NativeCore {
         strokeJson: String,
     ): String
 
+    external override fun documentAddShape(
+        documentJson: String,
+        pageId: String,
+        shapeJson: String,
+    ): String
+
     external override fun documentRemoveElement(
         documentJson: String,
         pageId: String,
@@ -98,6 +104,17 @@ interface NativeCore {
      * actualizado.
      */
     fun documentAddStroke(documentJson: String, pageId: String, strokeJson: String): String
+
+    /**
+     * Inserta una **forma geométrica** en la página [pageId]. [shapeJson] es un
+     * `Shape` serializado
+     * (`{"kind":"Rectangle","bounds":{"x","y","width","height"},"stroke_color":{...},"fill_color":null,"stroke_width"}`),
+     * con `kind` en `{Rectangle, Ellipse, Line, Arrow}`. El núcleo Rust normaliza
+     * los límites (esquina + tamaño positivo para rect/elipse; vector con signo
+     * para línea/flecha) y rechaza geometrías degeneradas. Devuelve el documento
+     * actualizado.
+     */
+    fun documentAddShape(documentJson: String, pageId: String, shapeJson: String): String
 
     /** Elimina el elemento [elementId] de la página [pageId]. */
     fun documentRemoveElement(documentJson: String, pageId: String, elementId: String): String

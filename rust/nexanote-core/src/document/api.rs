@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::element::{ElementKind, Stroke};
+use super::element::{ElementKind, Shape, ShapeKind, Stroke};
 use super::error::{DocResult, DocumentError};
 use super::model::Document;
 use super::page::{PageSize, PageTemplate};
@@ -126,6 +126,74 @@ fn sanitize_stroke(mut stroke: Stroke) -> DocResult<Stroke> {
         stroke.width = MIN_STROKE_WIDTH;
     }
     Ok(stroke)
+}
+
+/// Extensión mínima (unidades lógicas) para que una forma no sea degenerada. Es
+/// un suelo defensivo: la UI aplica su propio umbral de "arrastre intencionado".
+const MIN_SHAPE_EXTENT: f32 = 1.0;
+
+/// Inserta una **forma geométrica** (`Rectangle`, `Ellipse`, `Line`, `Arrow`) en
+/// la página `page_id`.
+///
+/// `shape_json` es un [`Shape`] serializado
+/// (`{"kind","bounds":{"x","y","width","height"},"stroke_color","fill_color","stroke_width"}`).
+/// El núcleo es la única autoridad sobre la validez de la forma y la **sanea**:
+///
+///  - exige límites finitos (si no, [`DocumentError::InvalidArgument`]);
+///  - `Rectangle`/`Ellipse`: normaliza a esquina superior-izquierda + tamaño no
+///    negativo (el arrastre en cualquier dirección es válido) y rechaza la forma
+///    si es más pequeña que [`MIN_SHAPE_EXTENT`] en ambos ejes;
+///  - `Line`/`Arrow`: conserva el signo de `(width, height)` -- es el vector del
+///    extremo inicial al final -- y rechaza el trazo si su longitud es menor que
+///    [`MIN_SHAPE_EXTENT`];
+///  - eleva `stroke_width` a [`MIN_STROKE_WIDTH`] si viene por debajo o no es finito.
+///
+/// Devuelve el documento actualizado.
+pub fn add_shape(document_json: &str, page_id: &str, shape_json: &str) -> DocResult<String> {
+    let mut doc = Document::from_json(document_json)?;
+    let id = page_id.parse()?;
+    let raw: Shape = parse(shape_json, "shape")?;
+    let shape = sanitize_shape(raw)?;
+    doc.page_mut(id)?.add_element(ElementKind::Shape(shape));
+    doc.to_json()
+}
+
+/// Aplica las reglas de validez de una forma geométrica. Ver [`add_shape`].
+fn sanitize_shape(mut shape: Shape) -> DocResult<Shape> {
+    let b = shape.bounds;
+    if !(b.x.is_finite() && b.y.is_finite() && b.width.is_finite() && b.height.is_finite()) {
+        return Err(DocumentError::InvalidArgument(
+            "los límites de la forma deben ser finitos".to_string(),
+        ));
+    }
+    match shape.kind {
+        ShapeKind::Rectangle | ShapeKind::Ellipse => {
+            if shape.bounds.width < 0.0 {
+                shape.bounds.x += shape.bounds.width;
+                shape.bounds.width = -shape.bounds.width;
+            }
+            if shape.bounds.height < 0.0 {
+                shape.bounds.y += shape.bounds.height;
+                shape.bounds.height = -shape.bounds.height;
+            }
+            if shape.bounds.width < MIN_SHAPE_EXTENT && shape.bounds.height < MIN_SHAPE_EXTENT {
+                return Err(DocumentError::InvalidArgument(
+                    "la forma es demasiado pequeña para dibujarse".to_string(),
+                ));
+            }
+        }
+        ShapeKind::Line | ShapeKind::Arrow => {
+            if shape.bounds.width.hypot(shape.bounds.height) < MIN_SHAPE_EXTENT {
+                return Err(DocumentError::InvalidArgument(
+                    "la línea es demasiado corta para dibujarse".to_string(),
+                ));
+            }
+        }
+    }
+    if !shape.stroke_width.is_finite() || shape.stroke_width < MIN_STROKE_WIDTH {
+        shape.stroke_width = MIN_STROKE_WIDTH;
+    }
+    Ok(shape)
 }
 
 /// Elimina el elemento `element_id` de la página `page_id`. Devuelve el documento
@@ -319,6 +387,101 @@ mod tests {
             "color":{"r":0,"g":0,"b":0,"a":255},"width":2.0}"#;
         let err = add_stroke(&doc, "00000000000000000000000000000009", stroke).unwrap_err();
         assert!(matches!(err, DocumentError::PageNotFound(_)));
+    }
+
+    #[test]
+    fn add_shape_normalizes_negative_rectangle_bounds() {
+        let (doc, page_id) = doc_with_blank_page();
+        // Arrastre de abajo-derecha hacia arriba-izquierda: width/height negativos.
+        let shape = r#"{"kind":"Rectangle","bounds":{"x":100.0,"y":100.0,"width":-40.0,"height":-30.0},
+            "stroke_color":{"r":0,"g":0,"b":0,"a":255},"fill_color":null,"stroke_width":2.0}"#;
+        let doc = add_shape(&doc, &page_id, shape).unwrap();
+
+        let parsed = Document::from_json(&doc).unwrap();
+        match &parsed.pages[0].elements[0].kind {
+            ElementKind::Shape(s) => {
+                assert_eq!(s.kind, ShapeKind::Rectangle);
+                assert_eq!((s.bounds.x, s.bounds.y), (60.0, 70.0));
+                assert_eq!((s.bounds.width, s.bounds.height), (40.0, 30.0));
+            }
+            other => panic!("esperaba Shape, no {other:?}"),
+        }
+    }
+
+    #[test]
+    fn add_shape_keeps_line_direction() {
+        let (doc, page_id) = doc_with_blank_page();
+        let shape = r#"{"kind":"Line","bounds":{"x":10.0,"y":10.0,"width":-50.0,"height":20.0},
+            "stroke_color":{"r":0,"g":0,"b":0,"a":255},"fill_color":null,"stroke_width":2.0}"#;
+        let doc = add_shape(&doc, &page_id, shape).unwrap();
+
+        let parsed = Document::from_json(&doc).unwrap();
+        if let ElementKind::Shape(s) = &parsed.pages[0].elements[0].kind {
+            // El signo se conserva: el vector del extremo no se normaliza.
+            assert_eq!((s.bounds.width, s.bounds.height), (-50.0, 20.0));
+        } else {
+            panic!("esperaba Shape");
+        }
+    }
+
+    #[test]
+    fn add_shape_rejects_degenerate_geometry() {
+        let (doc, page_id) = doc_with_blank_page();
+        let tiny_rect = r#"{"kind":"Ellipse","bounds":{"x":0.0,"y":0.0,"width":0.4,"height":0.3},
+            "stroke_color":{"r":0,"g":0,"b":0,"a":255},"fill_color":null,"stroke_width":2.0}"#;
+        assert!(matches!(
+            add_shape(&doc, &page_id, tiny_rect),
+            Err(DocumentError::InvalidArgument(_))
+        ));
+
+        let short_line = r#"{"kind":"Arrow","bounds":{"x":5.0,"y":5.0,"width":0.2,"height":0.1},
+            "stroke_color":{"r":0,"g":0,"b":0,"a":255},"fill_color":null,"stroke_width":2.0}"#;
+        assert!(matches!(
+            add_shape(&doc, &page_id, short_line),
+            Err(DocumentError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn add_shape_raises_min_stroke_width_and_accepts_fill() {
+        let (doc, page_id) = doc_with_blank_page();
+        let shape = r#"{"kind":"Rectangle","bounds":{"x":0.0,"y":0.0,"width":50.0,"height":40.0},
+            "stroke_color":{"r":0,"g":0,"b":0,"a":255},
+            "fill_color":{"r":200,"g":210,"b":220,"a":128},"stroke_width":0.0}"#;
+        let doc = add_shape(&doc, &page_id, shape).unwrap();
+
+        let parsed = Document::from_json(&doc).unwrap();
+        if let ElementKind::Shape(s) = &parsed.pages[0].elements[0].kind {
+            assert_eq!(s.stroke_width, MIN_STROKE_WIDTH);
+            assert_eq!(s.fill_color.map(|c| c.a), Some(128));
+        } else {
+            panic!("esperaba Shape");
+        }
+    }
+
+    #[test]
+    fn add_shape_to_missing_page_errors() {
+        let (doc, _) = doc_with_blank_page();
+        let shape = r#"{"kind":"Rectangle","bounds":{"x":0.0,"y":0.0,"width":10.0,"height":10.0},
+            "stroke_color":{"r":0,"g":0,"b":0,"a":255},"fill_color":null,"stroke_width":2.0}"#;
+        let err = add_shape(&doc, "00000000000000000000000000000009", shape).unwrap_err();
+        assert!(matches!(err, DocumentError::PageNotFound(_)));
+    }
+
+    #[test]
+    fn sanitize_shape_rejects_non_finite_bounds() {
+        use super::super::geometry::{Color, Rect};
+        let shape = Shape {
+            kind: ShapeKind::Rectangle,
+            bounds: Rect::new(f32::NAN, 0.0, 10.0, 10.0),
+            stroke_color: Color::BLACK,
+            fill_color: None,
+            stroke_width: 2.0,
+        };
+        assert!(matches!(
+            sanitize_shape(shape),
+            Err(DocumentError::InvalidArgument(_))
+        ));
     }
 
     #[test]

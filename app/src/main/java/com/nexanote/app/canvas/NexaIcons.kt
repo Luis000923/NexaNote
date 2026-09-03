@@ -1,6 +1,7 @@
 package com.nexanote.app.canvas
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathBuilder
@@ -16,7 +17,11 @@ import androidx.compose.ui.unit.dp
  */
 object NexaIcons {
 
-    private fun vector(name: String, block: PathBuilder.() -> Unit): ImageVector =
+    private fun vector(
+        name: String,
+        fillType: PathFillType = PathFillType.NonZero,
+        block: PathBuilder.() -> Unit,
+    ): ImageVector =
         ImageVector.Builder(
             name = name,
             defaultWidth = 24.dp,
@@ -24,7 +29,7 @@ object NexaIcons {
             viewportWidth = 24f,
             viewportHeight = 24f,
         ).apply {
-            path(fill = SolidColor(Color.Black), pathBuilder = block)
+            path(fill = SolidColor(Color.Black), pathFillType = fillType, pathBuilder = block)
         }.build()
 
     private fun PathBuilder.magnifier() {
@@ -175,6 +180,63 @@ object NexaIcons {
             lineToRelative(5f, 5f)
             lineToRelative(5f, -5f)
             horizontalLineToRelative(-3f)
+            close()
+        }
+    }
+
+    /** Herramienta de forma: línea recta (barra diagonal). */
+    val ShapeLine: ImageVector by lazy {
+        vector("nexa_shape_line") {
+            moveTo(4f, 18f)
+            lineTo(18f, 4f)
+            lineTo(20f, 6f)
+            lineTo(6f, 20f)
+            close()
+        }
+    }
+
+    /** Herramienta de forma: rectángulo (marco hueco). */
+    val ShapeRectangle: ImageVector by lazy {
+        vector("nexa_shape_rectangle", PathFillType.EvenOdd) {
+            moveTo(3f, 5f)
+            lineTo(21f, 5f)
+            lineTo(21f, 19f)
+            lineTo(3f, 19f)
+            close()
+            moveTo(6f, 8f)
+            lineTo(18f, 8f)
+            lineTo(18f, 16f)
+            lineTo(6f, 16f)
+            close()
+        }
+    }
+
+    /** Herramienta de forma: elipse (anillo). */
+    val ShapeEllipse: ImageVector by lazy {
+        vector("nexa_shape_ellipse", PathFillType.EvenOdd) {
+            moveTo(3f, 12f)
+            arcToRelative(9f, 9f, 0f, isMoreThanHalf = true, isPositiveArc = true, 18f, 0f)
+            arcToRelative(9f, 9f, 0f, isMoreThanHalf = true, isPositiveArc = true, -18f, 0f)
+            close()
+            moveTo(6f, 12f)
+            arcToRelative(6f, 6f, 0f, isMoreThanHalf = true, isPositiveArc = true, 12f, 0f)
+            arcToRelative(6f, 6f, 0f, isMoreThanHalf = true, isPositiveArc = true, -12f, 0f)
+            close()
+        }
+    }
+
+    /** Herramienta de forma: flecha (diagonal con punta). */
+    val ShapeArrow: ImageVector by lazy {
+        vector("nexa_shape_arrow") {
+            moveTo(9f, 5f)
+            verticalLineToRelative(2f)
+            horizontalLineToRelative(6.59f)
+            lineTo(4f, 18.59f)
+            lineTo(5.41f, 20f)
+            lineTo(17f, 8.41f)
+            verticalLineTo(15f)
+            horizontalLineToRelative(2f)
+            verticalLineTo(5f)
             close()
         }
     }

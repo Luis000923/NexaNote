@@ -3,11 +3,14 @@ package com.nexanote.app.canvas
 /**
  * Herramienta activa del lienzo.
  *
- *  - [Pen]: los gestos de un puntero (stylus o un dedo) escriben/dibujan; dos o
- *    más punteros siguen sirviendo para hacer zoom/pan.
+ *  - [Pen]: los gestos de un puntero (stylus o un dedo) escriben a mano alzada;
+ *    dos o más punteros siguen sirviendo para hacer zoom/pan.
  *  - [Pan]: todos los gestos navegan (zoom/pan); no se dibuja.
+ *  - [Line], [Rectangle], [Ellipse], [Arrow]: el arrastre de un puntero dibuja
+ *    la forma geométrica correspondiente con vista previa en tiempo real; dos o
+ *    más punteros siguen navegando.
  */
-enum class DrawingTool { Pen, Pan }
+enum class DrawingTool { Pen, Pan, Line, Rectangle, Ellipse, Arrow }
 
 /** Color RGBA de un trazo, en el mismo formato que espera el núcleo Rust. */
 data class StrokeColor(val r: Int, val g: Int, val b: Int, val a: Int = 255) {

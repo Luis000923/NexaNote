@@ -6,6 +6,9 @@ import com.nexanote.app.canvas.SampleDocument
 import com.nexanote.app.canvas.SceneParser
 import com.nexanote.app.canvas.ScenePrimitive
 import com.nexanote.app.canvas.SceneTemplate
+import com.nexanote.app.canvas.ShapeBounds
+import com.nexanote.app.canvas.ShapeGeometry
+import com.nexanote.app.canvas.ShapeKind
 import com.nexanote.app.canvas.StrokeColor
 import com.nexanote.app.canvas.StrokeGesture
 import com.nexanote.core.NativeBridge
@@ -142,6 +145,82 @@ class DocumentRenderBridgeTest {
             val s = vm.state.value
             if (s is SceneUiState.Ready) {
                 after = s.scene.primitives.count { it is ScenePrimitive.Polyline }
+            }
+            if (after > before) return@repeat
+            Thread.sleep(20)
+        }
+        assertEquals(before + 1, after)
+    }
+
+    @Test
+    fun geometricShapeIsNormalizedPersistedAndRenderedByRust() {
+        var doc = NativeBridge.documentCreate("Formas")
+        doc = NativeBridge.documentAddPage(
+            doc,
+            """{"size":{"format":"A4"},"template":{"kind":"Blank"}}""",
+        )
+        val pageId = JSONObject(doc).getJSONArray("pages").getJSONObject(0).getString("id")
+
+        // Rectángulo arrastrado "al revés": esquina final antes que la inicial.
+        val bounds = ShapeGeometry.boundsFor(ShapeKind.Rectangle, 200f, 160f, 80f, 40f)
+        val shapeJson = ShapeGeometry.toShapeJson(ShapeKind.Rectangle, bounds)
+        doc = NativeBridge.documentAddShape(doc, pageId, shapeJson)
+
+        val scene = SceneParser.parse(NativeBridge.documentRenderPage(doc, 0))
+        val rect = scene.primitives.filterIsInstance<ScenePrimitive.Rect>().single()
+        assertEquals(80f, rect.topLeft.x, 1e-3f)
+        assertEquals(40f, rect.topLeft.y, 1e-3f)
+        assertEquals(120f, rect.size.width, 1e-3f)
+        assertEquals(120f, rect.size.height, 1e-3f)
+    }
+
+    @Test
+    fun arrowShapePreservesDirectionThroughTheBridge() {
+        var doc = NativeBridge.documentCreate("Flecha")
+        doc = NativeBridge.documentAddPage(doc, "{}")
+        val pageId = JSONObject(doc).getJSONArray("pages").getJSONObject(0).getString("id")
+
+        val bounds = ShapeGeometry.boundsFor(ShapeKind.Arrow, 100f, 100f, 40f, 130f)
+        doc = NativeBridge.documentAddShape(doc, pageId, ShapeGeometry.toShapeJson(ShapeKind.Arrow, bounds))
+
+        val scene = SceneParser.parse(NativeBridge.documentRenderPage(doc, 0))
+        val arrow = scene.primitives.filterIsInstance<ScenePrimitive.Arrow>().single()
+        assertEquals(100f, arrow.start.x, 1e-3f)
+        assertEquals(40f, arrow.end.x, 1e-3f)
+        assertEquals(130f, arrow.end.y, 1e-3f)
+    }
+
+    @Test
+    fun degenerateShapeRaisesControlledErrorInsteadOfCrashing() {
+        var doc = NativeBridge.documentCreate("x")
+        doc = NativeBridge.documentAddPage(doc, "{}")
+        val pageId = JSONObject(doc).getJSONArray("pages").getJSONObject(0).getString("id")
+        try {
+            NativeBridge.documentAddShape(
+                doc,
+                pageId,
+                ShapeGeometry.toShapeJson(ShapeKind.Rectangle, ShapeBounds(0f, 0f, 0.1f, 0.1f)),
+            )
+            throw AssertionError("esperaba IllegalStateException")
+        } catch (expected: IllegalStateException) {
+            // ok
+        }
+    }
+
+    @Test
+    fun viewModelCommitsShapeAndRepublishesScene() = runBlocking {
+        val vm = DocumentViewModel(core = NativeBridge, bridgeAvailable = true)
+        val ready = vm.buildState()
+        assertTrue(ready is SceneUiState.Ready)
+        ready as SceneUiState.Ready
+        val before = ready.scene.primitives.count { it is ScenePrimitive.Ellipse }
+
+        vm.commitShape(ShapeKind.Ellipse, ShapeBounds(50f, 50f, 90f, 60f))
+
+        var after = before
+        repeat(50) {
+            (vm.state.value as? SceneUiState.Ready)?.let {
+                after = it.scene.primitives.count { p -> p is ScenePrimitive.Ellipse }
             }
             if (after > before) return@repeat
             Thread.sleep(20)
