@@ -641,6 +641,15 @@ object NexaIcons {
         }
     }
 
+    /** Grosor de trazo: tres barras horizontales de peso creciente. */
+    val LineWeight: ImageVector by lazy {
+        vector("nexa_line_weight") {
+            moveTo(4f, 5f); lineTo(20f, 5f); lineTo(20f, 6f); lineTo(4f, 6f); close()
+            moveTo(4f, 10f); lineTo(20f, 10f); lineTo(20f, 12f); lineTo(4f, 12f); close()
+            moveTo(4f, 16f); lineTo(20f, 16f); lineTo(20f, 19.5f); lineTo(4f, 19.5f); close()
+        }
+    }
+
     /** Nueva página: una hoja con un signo "más" en el centro. */
     val PageAdd: ImageVector by lazy {
         vector("nexa_page_add", PathFillType.EvenOdd) {

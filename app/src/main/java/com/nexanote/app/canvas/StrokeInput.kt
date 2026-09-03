@@ -81,6 +81,10 @@ class StrokeGesture(
         /** Grosor base del trazo, en unidades lógicas del documento. */
         const val DEFAULT_WIDTH = 3.0f
 
+        /** Rango de grosor que el selector de la UI ofrece al usuario. */
+        const val MIN_WIDTH = 1.0f
+        const val MAX_WIDTH = 24.0f
+
         /**
          * Normaliza la presión de un puntero: un stylus entrega `(0, 1]`; un dedo
          * suele entregar `0` o valores fuera de rango. Se satura a `[0.05, 1]` y

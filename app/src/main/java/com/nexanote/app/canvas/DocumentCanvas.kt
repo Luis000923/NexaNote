@@ -59,6 +59,10 @@ fun DocumentCanvas(
     onTransformChange: (CanvasTransform) -> Unit,
     modifier: Modifier = Modifier,
     tool: DrawingTool = DrawingTool.Pen,
+    /** Grosor (unidades del documento) del lápiz: se refleja en la vista previa del trazo. */
+    strokeWidth: Float = StrokeGesture.DEFAULT_WIDTH,
+    /** Color de la vista previa del trazo en curso (la tinta activa). */
+    inkColor: Color = Color(0xFF141821),
     onStrokeCommit: (List<StrokeSample>) -> Unit = {},
     onShapeCommit: (ShapeKind, ShapeBounds) -> Unit = { _, _ -> },
     onTextRequest: (Float, Float) -> Unit = { _, _ -> },
@@ -171,7 +175,7 @@ fun DocumentCanvas(
                 translate(transform.offsetX, transform.offsetY)
                 scale(transform.scale, transform.scale, Offset.Zero)
             }) {
-                if (strokeRevision >= 0) drawActiveStroke(active.points)
+                if (strokeRevision >= 0) drawActiveStroke(active, strokeWidth, inkColor)
                 if (shapeRevision >= 0) drawActiveShape(activeShape)
                 if (selectRevision >= 0) {
                     drawSelection(scene, selection, activeSelect, transform.scale)
@@ -430,29 +434,54 @@ private fun DrawScope.drawSelection(
 }
 
 /**
- * Estado mutable del trazo en curso. Los puntos son una lista plana (sin overhead
- * de `SnapshotStateList`); un contador de revisión, ese sí observable, dispara el
- * redibujado del `Canvas` en cada muestra nueva para lograr baja latencia.
+ * Estado mutable del trazo en curso, optimizado para el bucle de captura:
+ *
+ *  - las coordenadas viven en un `FloatArray` que crece por duplicación -- cero
+ *    autoboxing de `Offset`, cero `SnapshotStateList`;
+ *  - el [Path] de la vista previa se construye **incrementalmente** (`lineTo` por
+ *    cada punto nuevo), nunca se reconstruye entero en cada fotograma;
+ *  - sólo [revision] es estado observable, y se incrementa **una vez por evento**
+ *    de puntero (no una vez por muestra), así una ráfaga de puntos `historical`
+ *    provoca un único redibujado.
  */
 private class ActiveStroke {
-    val points = ArrayList<Offset>(256)
+    private var xy = FloatArray(1024)
+
+    /** Número de puntos acumulados. */
+    var size = 0
+        private set
+
+    /** Ruta de la vista previa, lista para `drawPath` sin más trabajo. */
+    val path = Path()
 
     var revision by mutableIntStateOf(0)
         private set
 
     fun begin() {
-        points.clear()
+        size = 0
+        path.rewind()
         revision++
     }
 
-    fun add(point: Offset) {
-        points.add(point)
+    /** Añade un punto (coords del documento) al buffer y a la ruta. No redibuja. */
+    fun add(x: Float, y: Float) {
+        val i = size * 2
+        if (i == xy.size) xy = xy.copyOf(xy.size * 2)
+        xy[i] = x
+        xy[i + 1] = y
+        if (size == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        size++
+    }
+
+    /** Publica los puntos añadidos desde el último `touch`: un solo redibujado. */
+    fun touch() {
         revision++
     }
 
     fun clear() {
-        if (points.isEmpty()) return
-        points.clear()
+        if (size == 0) return
+        size = 0
+        path.rewind()
         revision++
     }
 }
@@ -548,31 +577,27 @@ private fun recordSample(
         // La presión histórica no está en esta versión de Compose: se usa la de
         // la muestra actual, suficiente para el grosor variable del trazo.
         gesture.addScreenPoint(h.position.x, h.position.y, change.pressure, h.uptimeMillis)
-        active.add(modelPoint(transform, h.position))
+        val (mx, my) = transform.screenToModel(h.position.x, h.position.y)
+        active.add(mx, my)
     }
     gesture.addScreenPoint(change.position.x, change.position.y, change.pressure, change.uptimeMillis)
-    active.add(modelPoint(transform, change.position))
+    val (mx, my) = transform.screenToModel(change.position.x, change.position.y)
+    active.add(mx, my)
+    // Un único redibujado para todos los puntos de este evento.
+    active.touch()
 }
 
-private fun modelPoint(transform: CanvasTransform, screen: Offset): Offset {
-    val (x, y) = transform.screenToModel(screen.x, screen.y)
-    return Offset(x, y)
-}
-
-private fun DrawScope.drawActiveStroke(points: List<Offset>) {
-    if (points.size < 2) return
-    val path = Path().apply {
-        moveTo(points[0].x, points[0].y)
-        for (i in 1 until points.size) lineTo(points[i].x, points[i].y)
-    }
+/**
+ * Pinta la ruta ya construida del trazo en curso. No hace ningún cálculo de
+ * geometría: la matriz de zoom/desplazamiento la aplica el `DrawScope` una sola
+ * vez, y la ruta se acumuló incrementalmente en [ActiveStroke].
+ */
+private fun DrawScope.drawActiveStroke(active: ActiveStroke, width: Float, color: Color) {
+    if (active.size < 2) return
     drawPath(
-        path = path,
-        color = Color(0xFF141821),
-        style = Stroke(
-            width = StrokeGesture.DEFAULT_WIDTH,
-            cap = StrokeCap.Round,
-            join = StrokeJoin.Round,
-        ),
+        path = active.path,
+        color = color,
+        style = Stroke(width = width, cap = StrokeCap.Round, join = StrokeJoin.Round),
     )
 }
 

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -25,6 +26,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -59,6 +61,7 @@ import com.nexanote.app.canvas.NexaIcons
 import com.nexanote.app.canvas.NexaPalette
 import com.nexanote.app.canvas.Selection
 import com.nexanote.app.canvas.StrokeColor
+import com.nexanote.app.canvas.StrokeGesture
 import com.nexanote.app.ai.AiViewModel
 
 /**
@@ -83,6 +86,7 @@ fun DocumentScreen(
     val export by viewModel.export.collectAsState()
     val selection by viewModel.selection.collectAsState()
     val inkColor by viewModel.inkColor.collectAsState()
+    val strokeWidth by viewModel.strokeWidth.collectAsState()
 
     val aiSettings by aiViewModel.settings.collectAsState()
     val assist by aiViewModel.assist.collectAsState()
@@ -179,6 +183,8 @@ fun DocumentScreen(
                     var tool by remember { mutableStateOf(DrawingTool.Pen) }
                     // Paleta flotante abierta: tinta del trazo o relleno de la selección.
                     var palette by remember { mutableStateOf<PaletteMode?>(null) }
+                    // Deslizador de grosor del lápiz abierto.
+                    var showWidth by remember { mutableStateOf(false) }
                     // Posición (coords del documento) de un bloque de texto pendiente de escribir.
                     var pendingText by remember(s.scene.pageId) {
                         mutableStateOf<Pair<Float, Float>?>(null)
@@ -236,6 +242,8 @@ fun DocumentScreen(
                         transform = transform,
                         onTransformChange = { transform = it },
                         tool = tool,
+                        strokeWidth = strokeWidth,
+                        inkColor = Color(inkColor.r, inkColor.g, inkColor.b, inkColor.a),
                         onStrokeCommit = viewModel::commitStroke,
                         onShapeCommit = viewModel::commitShape,
                         onTextRequest = { x, y -> pendingText = x to y },
@@ -292,8 +300,27 @@ fun DocumentScreen(
                             if (newTool != DrawingTool.Select) viewModel.clearSelection()
                         },
                         inkColor = inkColor,
-                        onOpenInkPalette = { palette = PaletteMode.Ink },
+                        strokeWidth = strokeWidth,
+                        onOpenInkPalette = {
+                            showWidth = false
+                            palette = PaletteMode.Ink
+                        },
+                        onOpenWidth = {
+                            palette = null
+                            showWidth = !showWidth
+                        },
                     )
+
+                    if (showWidth) {
+                        StrokeWidthPopup(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(16.dp),
+                            width = strokeWidth,
+                            onWidth = viewModel::setStrokeWidth,
+                            onDismiss = { showWidth = false },
+                        )
+                    }
 
                     // Navegador de páginas: sólo cuando hay más de una y la barra
                     // de selección no está ocupando ese mismo borde superior.
@@ -504,7 +531,9 @@ private fun ToolPalette(
     selected: DrawingTool,
     onSelect: (DrawingTool) -> Unit,
     inkColor: StrokeColor,
+    strokeWidth: Float,
     onOpenInkPalette: () -> Unit,
+    onOpenWidth: () -> Unit,
 ) {
     Column(
         modifier = modifier,
@@ -517,6 +546,19 @@ private fun ToolPalette(
                 description = label,
                 selected = tool == selected,
                 onClick = { onSelect(tool) },
+            )
+        }
+        // Grosor del lápiz: abre el deslizador y muestra el calibre vigente como
+        // un punto proporcional, sin ningún texto ni emoji.
+        Box(contentAlignment = Alignment.Center) {
+            FilledTonalIconButton(onClick = onOpenWidth) {
+                Icon(NexaIcons.LineWeight, contentDescription = "Grosor del lápiz")
+            }
+            Box(
+                modifier = Modifier
+                    .size(strokeWidth.coerceIn(2f, 16f).dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.onSurface),
             )
         }
         // Abre la paleta y, a la vez, muestra el color de tinta vigente.
@@ -532,6 +574,47 @@ private fun ToolPalette(
                     .background(inkColor.toComposeColor())
                     .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
             )
+        }
+    }
+}
+
+/**
+ * Deslizador flotante del grosor del lápiz. El cambio se aplica en vivo: la vista
+ * previa del trazo y el próximo [DocumentViewModel.commitStroke] ya usan el valor
+ * nuevo. Una muestra circular refleja el calibre a escala real.
+ */
+@Composable
+private fun StrokeWidthPopup(
+    modifier: Modifier,
+    width: Float,
+    onWidth: (Float) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Card(modifier = modifier, shape = RoundedCornerShape(20.dp)) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(width.coerceIn(2f, 24f).dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.onSurface),
+                )
+            }
+            Slider(
+                value = width,
+                onValueChange = onWidth,
+                valueRange = StrokeGesture.MIN_WIDTH..StrokeGesture.MAX_WIDTH,
+                modifier = Modifier.width(200.dp),
+            )
+            TextButton(onClick = onDismiss) { Text("Cerrar") }
         }
     }
 }

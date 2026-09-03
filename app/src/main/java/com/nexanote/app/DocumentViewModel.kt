@@ -134,6 +134,15 @@ class DocumentViewModel(
     /** Color de tinta con el que se crean los trazos y las formas nuevas. */
     val inkColor: StateFlow<StrokeColor> = _inkColor.asStateFlow()
 
+    private val _strokeWidth = MutableStateFlow(StrokeGesture.DEFAULT_WIDTH)
+
+    /**
+     * Grosor (unidades lógicas del documento) del lápiz a mano alzada. Persiste
+     * durante la sesión de dibujo; se refleja en la vista previa del trazo y viaja
+     * al núcleo en cada [commitStroke].
+     */
+    val strokeWidth: StateFlow<Float> = _strokeWidth.asStateFlow()
+
     private val historyController = DocumentHistory(core)
 
     /** Estado del documento vivo en el núcleo. `@Volatile`: se toca desde varias corrutinas. */
@@ -199,10 +208,9 @@ class DocumentViewModel(
         val doc = documentJson ?: return
         val page = pageId ?: return
         val snapshot = samples.toList()
+        val width = _strokeWidth.value
         edit {
-            val strokeJson = StrokeGesture.buildStrokeJson(
-                snapshot, _inkColor.value, StrokeGesture.DEFAULT_WIDTH,
-            )
+            val strokeJson = StrokeGesture.buildStrokeJson(snapshot, _inkColor.value, width)
             core.documentAddStroke(doc, page, strokeJson)
         }
     }
@@ -324,6 +332,15 @@ class DocumentViewModel(
                 autosave(updated)
             }
         }
+    }
+
+    /**
+     * Fija el grosor del lápiz a mano alzada, acotado al rango admitido. Sólo
+     * afecta a los trazos que se dibujen a partir de ahora; no toca el documento.
+     */
+    fun setStrokeWidth(width: Float) {
+        if (!width.isFinite()) return
+        _strokeWidth.value = width.coerceIn(StrokeGesture.MIN_WIDTH, StrokeGesture.MAX_WIDTH)
     }
 
     /**
