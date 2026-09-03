@@ -8,7 +8,7 @@ use jni::objects::{JObject, JString};
 use jni::sys::jstring;
 use jni::JNIEnv;
 
-use crate::document::{api, render, DocumentError};
+use crate::document::{api, history, render, DocumentError};
 use crate::{greeting, CORE_VERSION};
 
 /// Traduce un [`DocumentError`] a una excepción Java y devuelve un `jstring` nulo.
@@ -271,6 +271,79 @@ pub extern "system" fn Java_com_nexanote_core_NativeBridge_documentRenderPage<'l
     let doc = read_string(&mut env, &document_json);
     let index = if page_index < 0 { 0usize } else { page_index as usize };
     run_api(&mut env, render::render_page(&doc, index))
+}
+
+// ---------------------------------------------------------------------------
+// Historial de edición (Fase 9). El historial viaja como su propio blob JSON,
+// igual que el documento: el núcleo sigue siendo *stateless*.
+// ---------------------------------------------------------------------------
+
+/// `external fun historyInit(documentJson: String): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_historyInit<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    document_json: JString<'local>,
+) -> jstring {
+    let doc = read_string(&mut env, &document_json);
+    run_api(&mut env, history::init(&doc))
+}
+
+/// `external fun historyRecord(historyJson: String, documentJson: String): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_historyRecord<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    history_json: JString<'local>,
+    document_json: JString<'local>,
+) -> jstring {
+    let hist = read_string(&mut env, &history_json);
+    let doc = read_string(&mut env, &document_json);
+    run_api(&mut env, history::record(&hist, &doc))
+}
+
+/// `external fun historyUndo(historyJson: String): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_historyUndo<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    history_json: JString<'local>,
+) -> jstring {
+    let hist = read_string(&mut env, &history_json);
+    run_api(&mut env, history::undo(&hist))
+}
+
+/// `external fun historyRedo(historyJson: String): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_historyRedo<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    history_json: JString<'local>,
+) -> jstring {
+    let hist = read_string(&mut env, &history_json);
+    run_api(&mut env, history::redo(&hist))
+}
+
+/// `external fun historyDocument(historyJson: String): String`
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_historyDocument<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    history_json: JString<'local>,
+) -> jstring {
+    let hist = read_string(&mut env, &history_json);
+    run_api(&mut env, history::document(&hist))
+}
+
+/// `external fun historyStatus(historyJson: String): String` -> `"<undo>,<redo>"`
+#[no_mangle]
+pub extern "system" fn Java_com_nexanote_core_NativeBridge_historyStatus<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    history_json: JString<'local>,
+) -> jstring {
+    let hist = read_string(&mut env, &history_json);
+    run_api(&mut env, history::status(&hist))
 }
 
 /// `external fun documentSummary(documentJson: String): String`

@@ -16,6 +16,7 @@ pub mod api;
 pub mod element;
 pub mod error;
 pub mod geometry;
+pub mod history;
 pub mod id;
 pub mod math;
 pub mod model;
@@ -27,6 +28,7 @@ pub use element::{
     StrokePoint, TextBox, TextStyle,
 };
 pub use error::{DocResult, DocumentError};
+pub use history::History;
 pub use math::{MathError, MathResult};
 pub use geometry::{Color, Point, Rect, Transformable};
 pub use id::{DocumentId, ElementId, Id, PageId};

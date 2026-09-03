@@ -87,6 +87,18 @@ object NativeBridge : NativeCore {
     external override fun documentSummary(documentJson: String): String
 
     external override fun documentRenderPage(documentJson: String, pageIndex: Int): String
+
+    external override fun historyInit(documentJson: String): String
+
+    external override fun historyRecord(historyJson: String, documentJson: String): String
+
+    external override fun historyUndo(historyJson: String): String
+
+    external override fun historyRedo(historyJson: String): String
+
+    external override fun historyDocument(historyJson: String): String
+
+    external override fun historyStatus(historyJson: String): String
 }
 
 /** Contrato del núcleo. La UI depende de esta interfaz, no de la implementación JNI. */
@@ -187,4 +199,28 @@ interface NativeCore {
      * ordenadas. La UI la pinta tal cual; no interpreta el modelo.
      */
     fun documentRenderPage(documentJson: String, pageIndex: Int): String
+
+    // -- Historial de edición (Fase 9) -------------------------------------
+    // El historial es un blob JSON opaco para Kotlin: se crea con [historyInit],
+    // se alimenta con [historyRecord] tras cada edición y se navega con
+    // [historyUndo] / [historyRedo]. [historyDocument] extrae el documento del
+    // estado actual y [historyStatus] devuelve `"<undoDepth>,<redoDepth>"`.
+
+    /** Crea un historial anclado en [documentJson] (sin nada que deshacer). */
+    fun historyInit(documentJson: String): String
+
+    /** Registra [documentJson] como nuevo estado actual; corta la rama de redo. */
+    fun historyRecord(historyJson: String, documentJson: String): String
+
+    /** Deshace un paso. Si no hay nada que deshacer, devuelve el historial intacto. */
+    fun historyUndo(historyJson: String): String
+
+    /** Rehace un paso. Si no hay nada que rehacer, devuelve el historial intacto. */
+    fun historyRedo(historyJson: String): String
+
+    /** Documento (JSON) del estado actual del historial. */
+    fun historyDocument(historyJson: String): String
+
+    /** Estado del historial como `"<undoDepth>,<redoDepth>"`. */
+    fun historyStatus(historyJson: String): String
 }

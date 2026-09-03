@@ -84,6 +84,34 @@ class NativeBridgeTest {
         NativeBridge.documentAddText(doc, pageId, blank)
     }
 
+    @Test
+    fun historyUndoAndRedoCrossTheBridge() {
+        var doc = NativeBridge.documentCreate("Historial")
+        val pageId = JSONObject(
+            NativeBridge.documentAddPage(doc, "{}").also { doc = it },
+        ).getJSONArray("pages").getJSONObject(0).getString("id")
+
+        var history = NativeBridge.historyInit(doc)
+        assertEquals("0,0", NativeBridge.historyStatus(history))
+
+        val stroke = """
+            {"points":[{"position":{"x":1.0,"y":2.0},"pressure":0.5,"timestamp_ms":0}],
+             "color":{"r":0,"g":0,"b":0,"a":255},"width":2.0}
+        """.trimIndent()
+        doc = NativeBridge.documentAddStroke(doc, pageId, stroke)
+        history = NativeBridge.historyRecord(history, doc)
+        assertEquals("1,0", NativeBridge.historyStatus(history))
+
+        history = NativeBridge.historyUndo(history)
+        assertEquals("0,1", NativeBridge.historyStatus(history))
+        val backToEmpty = JSONObject(NativeBridge.documentSummary(NativeBridge.historyDocument(history)))
+        assertEquals(0, backToEmpty.getInt("element_count"))
+
+        history = NativeBridge.historyRedo(history)
+        val redone = JSONObject(NativeBridge.documentSummary(NativeBridge.historyDocument(history)))
+        assertEquals(1, redone.getInt("element_count"))
+    }
+
     @Test(expected = IllegalStateException::class)
     fun invalidPageIdRaisesInsteadOfCrashing() {
         val doc = NativeBridge.documentCreate("d")

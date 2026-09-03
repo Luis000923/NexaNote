@@ -11,6 +11,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -43,10 +44,21 @@ import com.nexanote.app.canvas.NexaIcons
 @Composable
 fun DocumentScreen(viewModel: DocumentViewModel = viewModel()) {
     val state by viewModel.state.collectAsState()
+    val history by viewModel.history.collectAsState()
 
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("NexaNote") })
+            TopAppBar(
+                title = { Text("NexaNote") },
+                actions = {
+                    IconButton(onClick = viewModel::undo, enabled = history.canUndo) {
+                        Icon(NexaIcons.Undo, contentDescription = "Deshacer")
+                    }
+                    IconButton(onClick = viewModel::redo, enabled = history.canRedo) {
+                        Icon(NexaIcons.Redo, contentDescription = "Rehacer")
+                    }
+                },
+            )
         },
     ) { padding ->
         Box(

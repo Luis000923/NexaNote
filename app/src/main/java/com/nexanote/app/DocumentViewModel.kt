@@ -17,6 +17,8 @@ import com.nexanote.app.canvas.TextInput
 import com.nexanote.core.NativeBridge
 import com.nexanote.core.NativeCore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,18 +32,33 @@ sealed interface SceneUiState {
     data class Error(val message: String) : SceneUiState
 }
 
+/** Estado de los controles de historial (habilitar/deshabilitar Undo y Redo). */
+data class HistoryUiState(val canUndo: Boolean = false, val canRedo: Boolean = false)
+
 /**
  * ViewModel de la pantalla de documento. No contiene lógica de dominio: pide al
- * núcleo Rust (a través de [NativeCore]) que construya el documento de ejemplo,
- * conserva su JSON y le añade los trazos que captura el lienzo, devolviendo cada
- * vez la escena de render.
+ * núcleo Rust (a través de [NativeCore]) que construya el documento, conserva su
+ * JSON y le añade los elementos que captura el lienzo, devolviendo cada vez la
+ * escena de render.
  *
- * Todo el trabajo del puente (serialización de trazos incluida) se hace en
- * [Dispatchers.Default], nunca en el hilo principal.
+ * Fase 9 añade:
+ *  - **Historial** ([DocumentHistory]): cada edición confirmada se registra; los
+ *    botones de Deshacer/Rehacer navegan la pila en el núcleo (operación O(1)).
+ *  - **Autosave / recuperación** ([DocumentStore]): tras cada edición el
+ *    documento se persiste localmente con un pequeño rebote; al arrancar, si hay
+ *    un estado guardado se recupera en lugar de reconstruir el de ejemplo.
+ *
+ * Todo el trabajo del puente (serialización incluida) y el de disco se hace
+ * fuera del hilo principal.
  */
 class DocumentViewModel(
     private val core: NativeCore = NativeBridge,
     private val bridgeAvailable: Boolean = NativeBridge.isLoaded,
+    private val store: DocumentStore = DocumentStore.NoOp,
+    private val loadDocument: (NativeCore) -> SampleDocument.LoadedDocument = {
+        SampleDocument.buildDocument(it)
+    },
+    private val pageIdOf: (String) -> String = SampleDocument::firstPageId,
 ) : ViewModel() {
 
     /** Constructor sin argumentos requerido por la factoría por defecto de `viewModel()`. */
@@ -50,6 +67,11 @@ class DocumentViewModel(
     private val _state = MutableStateFlow<SceneUiState>(SceneUiState.Loading)
     val state: StateFlow<SceneUiState> = _state.asStateFlow()
 
+    private val _history = MutableStateFlow(HistoryUiState())
+    val history: StateFlow<HistoryUiState> = _history.asStateFlow()
+
+    private val historyController = DocumentHistory(core)
+
     /** Estado del documento vivo en el núcleo. `@Volatile`: se toca desde varias corrutinas. */
     @Volatile
     private var documentJson: String? = null
@@ -57,148 +79,163 @@ class DocumentViewModel(
     @Volatile
     private var pageId: String? = null
 
+    @Volatile
+    private var autosaveJob: Job? = null
+
     init {
         reload()
     }
 
-    fun reload() {
+    /** Recarga desde cero: descarta el estado guardado y reconstruye el documento de ejemplo. */
+    fun reset() {
+        store.clear()
+        reload(fromAutosave = false)
+    }
+
+    fun reload() = reload(fromAutosave = true)
+
+    private fun reload(fromAutosave: Boolean) {
         _state.value = SceneUiState.Loading
-        viewModelScope.launch { _state.value = buildState() }
+        viewModelScope.launch { _state.value = buildState(fromAutosave) }
     }
 
     /** Construye el estado inicial de forma síncrona-suspendida; reutilizable en tests. */
-    suspend fun buildState(): SceneUiState = withContext(Dispatchers.Default) {
+    suspend fun buildState(fromAutosave: Boolean = true): SceneUiState = withContext(Dispatchers.Default) {
         if (!bridgeAvailable) {
             return@withContext SceneUiState.Error("El núcleo nativo no está disponible")
         }
         runCatching {
-            val loaded = SampleDocument.buildDocument(core)
-            documentJson = loaded.documentJson
-            pageId = loaded.pageId
-            SceneParser.parse(core.documentRenderPage(loaded.documentJson, 0))
+            val recovered = if (fromAutosave) runCatching { store.restore() }.getOrNull() else null
+            if (recovered != null) {
+                documentJson = recovered
+                pageId = pageIdOf(recovered)
+            } else {
+                val loaded = loadDocument(core)
+                documentJson = loaded.documentJson
+                pageId = loaded.pageId
+            }
+            historyController.begin(documentJson!!)
+            publishHistory()
+            SceneParser.parse(core.documentRenderPage(documentJson!!, 0))
         }.fold(
             onSuccess = { SceneUiState.Ready(it) },
             onFailure = { SceneUiState.Error(it.message ?: it.javaClass.simpleName) },
         )
     }
 
-    /**
-     * Persiste un trazo capturado por el lienzo en el núcleo Rust y publica la
-     * escena re-renderizada. La serialización y la llamada FFI van fuera del hilo
-     * principal; un fallo del núcleo deja la escena actual intacta.
-     */
     fun commitStroke(samples: List<StrokeSample>) {
         if (samples.isEmpty()) return
         val doc = documentJson ?: return
         val page = pageId ?: return
         val snapshot = samples.toList()
-        viewModelScope.launch {
-            withContext(Dispatchers.Default) {
-                runCatching {
-                    val strokeJson = StrokeGesture.buildStrokeJson(
-                        snapshot, StrokeColor.Ink, StrokeGesture.DEFAULT_WIDTH,
-                    )
-                    val updated = core.documentAddStroke(doc, page, strokeJson)
-                    updated to SceneParser.parse(core.documentRenderPage(updated, 0))
-                }
-            }.onSuccess { (updated, scene) ->
-                documentJson = updated
-                _state.value = SceneUiState.Ready(scene)
-            }
+        edit {
+            val strokeJson = StrokeGesture.buildStrokeJson(
+                snapshot, StrokeColor.Ink, StrokeGesture.DEFAULT_WIDTH,
+            )
+            core.documentAddStroke(doc, page, strokeJson)
         }
     }
 
-    /**
-     * Persiste una forma geométrica dibujada en el lienzo. Como [commitStroke], la
-     * serialización y la llamada FFI van fuera del hilo principal y un fallo del
-     * núcleo (p. ej. forma degenerada) deja la escena actual intacta.
-     */
     fun commitShape(kind: ShapeKind, bounds: ShapeBounds) {
         val doc = documentJson ?: return
         val page = pageId ?: return
-        viewModelScope.launch {
-            withContext(Dispatchers.Default) {
-                runCatching {
-                    val shapeJson = ShapeGeometry.toShapeJson(kind, bounds)
-                    val updated = core.documentAddShape(doc, page, shapeJson)
-                    updated to SceneParser.parse(core.documentRenderPage(updated, 0))
-                }
-            }.onSuccess { (updated, scene) ->
-                documentJson = updated
-                _state.value = SceneUiState.Ready(scene)
-            }
-        }
+        edit { core.documentAddShape(doc, page, ShapeGeometry.toShapeJson(kind, bounds)) }
     }
 
-    /**
-     * Persiste un bloque de texto creado en el lienzo. `(x, y)` es la línea base
-     * del texto en coordenadas del documento. Como [commitStroke], la
-     * serialización y la llamada FFI van fuera del hilo principal; el contenido
-     * en blanco se ignora y un fallo del núcleo deja la escena actual intacta.
-     */
     fun commitText(x: Float, y: Float, content: String) {
         if (!TextInput.isCommittable(content)) return
         val doc = documentJson ?: return
         val page = pageId ?: return
-        viewModelScope.launch {
-            withContext(Dispatchers.Default) {
-                runCatching {
-                    val textJson = TextInput.toTextJson(content, x, y)
-                    val updated = core.documentAddText(doc, page, textJson)
-                    updated to SceneParser.parse(core.documentRenderPage(updated, 0))
-                }
-            }.onSuccess { (updated, scene) ->
-                documentJson = updated
-                _state.value = SceneUiState.Ready(scene)
-            }
-        }
+        edit { core.documentAddText(doc, page, TextInput.toTextJson(content, x, y)) }
     }
 
-    /**
-     * Persiste una fórmula matemática creada en el lienzo. `(x, y)` es la línea
-     * base en coordenadas del documento. Como [commitStroke], la serialización y
-     * la llamada FFI van fuera del hilo principal; la expresión en blanco se
-     * ignora y un fallo del núcleo (sintaxis inválida) deja la escena intacta.
-     */
     fun commitFormula(x: Float, y: Float, expression: String) {
         if (!FormulaInput.isCommittable(expression)) return
         val doc = documentJson ?: return
         val page = pageId ?: return
+        edit { core.documentAddFormula(doc, page, FormulaInput.toFormulaJson(expression, x, y)) }
+    }
+
+    fun commitGraph(x: Float, y: Float, expression: String, xMin: Double, xMax: Double) {
+        val doc = documentJson ?: return
+        val page = pageId ?: return
+        edit { core.documentAddGraph(doc, page, GraphInput.toGraphJson(expression, xMin, xMax, x, y)) }
+    }
+
+    /** Deshace la última edición confirmada. Instantáneo: el núcleo no re-ejecuta lógica. */
+    fun undo() = navigate { historyController.undo() }
+
+    /** Rehace la última edición deshecha. */
+    fun redo() = navigate { historyController.redo() }
+
+    /** Fuerza un guardado inmediato del documento activo (p. ej. al pausar la Activity). */
+    fun flush() {
+        val doc = documentJson ?: return
+        autosaveJob?.cancel()
+        viewModelScope.launch(Dispatchers.IO) { runCatching { store.persist(doc) } }
+    }
+
+    /**
+     * Ejecuta una edición del núcleo fuera del hilo principal: aplica el
+     * documento resultante, lo registra en el historial, lo autoguarda y publica
+     * la escena. Un fallo del núcleo deja la escena y el historial intactos.
+     */
+    private fun edit(mutate: suspend () -> String) {
         viewModelScope.launch {
-            withContext(Dispatchers.Default) {
+            val result = withContext(Dispatchers.Default) {
                 runCatching {
-                    val formulaJson = FormulaInput.toFormulaJson(expression, x, y)
-                    val updated = core.documentAddFormula(doc, page, formulaJson)
+                    val updated = mutate()
                     updated to SceneParser.parse(core.documentRenderPage(updated, 0))
                 }
-            }.onSuccess { (updated, scene) ->
+            }
+            result.onSuccess { (updated, scene) ->
                 documentJson = updated
                 _state.value = SceneUiState.Ready(scene)
+                withContext(Dispatchers.Default) { historyController.record(updated) }
+                publishHistory()
+                autosave(updated)
             }
         }
     }
 
-    /**
-     * Persiste una gráfica de función creada en el lienzo. `(x, y)` es la esquina
-     * superior izquierda del marco en coordenadas del documento. Como
-     * [commitStroke], la serialización, la llamada FFI y el muestreo de la curva
-     * (que hace el núcleo al renderizar) van fuera del hilo principal; una entrada
-     * inválida se ignora y un fallo del núcleo deja la escena actual intacta.
-     */
-    fun commitGraph(x: Float, y: Float, expression: String, xMin: Double, xMax: Double) {
-        val doc = documentJson ?: return
-        val page = pageId ?: return
+    private fun navigate(step: () -> String?) {
         viewModelScope.launch {
-            withContext(Dispatchers.Default) {
+            val result = withContext(Dispatchers.Default) {
                 runCatching {
-                    val graphJson = GraphInput.toGraphJson(expression, xMin, xMax, x, y)
-                    val updated = core.documentAddGraph(doc, page, graphJson)
-                    updated to SceneParser.parse(core.documentRenderPage(updated, 0))
+                    val doc = step() ?: return@runCatching null
+                    doc to SceneParser.parse(core.documentRenderPage(doc, 0))
                 }
-            }.onSuccess { (updated, scene) ->
-                documentJson = updated
-                _state.value = SceneUiState.Ready(scene)
+            }
+            result.onSuccess { pair ->
+                pair?.let { (doc, scene) ->
+                    documentJson = doc
+                    _state.value = SceneUiState.Ready(scene)
+                    publishHistory()
+                    autosave(doc)
+                }
             }
         }
+    }
+
+    private fun publishHistory() {
+        _history.value = HistoryUiState(historyController.canUndo, historyController.canRedo)
+    }
+
+    /** Autosave por eventos clave con rebote: coalesce ráfagas de ediciones seguidas. */
+    private fun autosave(documentJson: String) {
+        autosaveJob?.cancel()
+        autosaveJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(AUTOSAVE_DEBOUNCE_MS)
+            runCatching { store.persist(documentJson) }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        autosaveJob?.cancel()
+    }
+
+    private companion object {
+        const val AUTOSAVE_DEBOUNCE_MS = 600L
     }
 }

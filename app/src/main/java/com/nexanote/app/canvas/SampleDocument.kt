@@ -97,6 +97,10 @@ object SampleDocument {
         return LoadedDocument(doc, pageId)
     }
 
+    /** Id de la primera página de un documento serializado. */
+    fun firstPageId(documentJson: String): String =
+        JSONObject(documentJson).getJSONArray("pages").getJSONObject(0).getString("id")
+
     fun buildScene(core: NativeCore, title: String = "Documento de ejemplo"): ScenePage {
         val loaded = buildDocument(core, title)
         return SceneParser.parse(core.documentRenderPage(loaded.documentJson, 0))

@@ -307,6 +307,40 @@ object NexaIcons {
         }
     }
 
+    /** Deshacer: flecha curva que gira a la izquierda. */
+    val Undo: ImageVector by lazy {
+        vector("nexa_undo") {
+            moveTo(12.5f, 8f)
+            curveToRelative(-2.65f, 0f, -5.05f, 0.99f, -6.9f, 2.6f)
+            lineTo(2f, 7f)
+            verticalLineToRelative(9f)
+            horizontalLineToRelative(9f)
+            lineToRelative(-3.62f, -3.62f)
+            curveToRelative(1.39f, -1.16f, 3.16f, -1.88f, 5.12f, -1.88f)
+            curveToRelative(3.54f, 0f, 6.55f, 2.31f, 7.6f, 5.5f)
+            lineToRelative(2.37f, -0.78f)
+            curveTo(19.08f, 11.03f, 15.15f, 8f, 12.5f, 8f)
+            close()
+        }
+    }
+
+    /** Rehacer: flecha curva que gira a la derecha (espejo de [Undo]). */
+    val Redo: ImageVector by lazy {
+        vector("nexa_redo") {
+            moveTo(18.4f, 10.6f)
+            curveTo(16.55f, 8.99f, 14.15f, 8f, 11.5f, 8f)
+            curveToRelative(-4.65f, 0f, -8.58f, 3.03f, -9.96f, 7.22f)
+            lineTo(3.9f, 16f)
+            curveToRelative(1.05f, -3.19f, 4.05f, -5.5f, 7.6f, -5.5f)
+            curveToRelative(1.95f, 0f, 3.73f, 0.72f, 5.12f, 1.88f)
+            lineTo(13f, 16f)
+            horizontalLineToRelative(9f)
+            verticalLineTo(7f)
+            lineToRelative(-3.6f, 3.6f)
+            close()
+        }
+    }
+
     val Refresh: ImageVector by lazy {
         vector("nexa_refresh") {
             moveTo(17.65f, 6.35f)
