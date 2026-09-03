@@ -10,6 +10,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.CreationExtras
+import com.nexanote.app.ai.AiViewModel
+import com.nexanote.app.ai.SecureSettings
 
 class MainActivity : ComponentActivity() {
 
@@ -30,12 +32,25 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** ViewModel de IA con almacenamiento cifrado (`EncryptedSharedPreferences`). */
+    private val aiViewModel: AiViewModel by viewModels {
+        object : ViewModelProvider.Factory {
+            override fun <T : androidx.lifecycle.ViewModel> create(
+                modelClass: Class<T>,
+                extras: CreationExtras,
+            ): T {
+                @Suppress("UNCHECKED_CAST")
+                return AiViewModel(SecureSettings.create(applicationContext)) as T
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    DocumentScreen(viewModel)
+                    DocumentScreen(viewModel, aiViewModel)
                 }
             }
         }

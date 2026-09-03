@@ -45,6 +45,7 @@ autosave offline-first y exportación a PDF (futuro).
 **9: Historial Undo/Redo (instantáneas acotadas) + autosave / recuperación de sesión.**
 10: Imágenes en el núcleo + selector nativo en Android.
 **11: Exportación a PDF multipágina (`app/.../pdf/`, API nativa `PdfDocument` sobre la escena del núcleo).**
+**12: Integración de IA con credenciales del usuario cifradas (`app/.../ai/`).**
 
 ---
 
@@ -367,6 +368,20 @@ blob JSON opaco y expone `canUndo`/`canRedo` + `begin`/`record`/`undo()`/`redo()
 | `PdfWriter.kt` | Interfaz `PdfWriter` + `AndroidPdfWriter` (API nativa `android.graphics.pdf.PdfDocument`, una página del PDF por página del documento, a su tamaño exacto). |
 
 La exportación se dispara desde `DocumentScreen` (icono `NexaIcons.ExportPdf`, `CreateDocument` del SAF) → `DocumentViewModel.exportPdf(images, openStream)`, que renderiza todas las páginas y escribe el PDF **fuera del hilo principal** (`Dispatchers.Default` + `Dispatchers.IO`), publicando el resultado en `export: StateFlow<PdfExportUiState>`. Se optó por la API de Android (no una crate de PDF en Rust) porque `render.rs` ya es la autoridad única sobre unidades/orden/muestreo: aquí sólo se rasteriza.
+
+### Paquete `com.nexanote.app.ai` (Fase 12)
+
+| Archivo | Contenido |
+|---|---|
+| `AiSettings.kt` | `AiProviderId` (OpenAi/Anthropic: nombre, modelo por defecto, endpoint) + `AiSettings` (proveedor, apiKey, modelo). `toString` nunca revela la clave. |
+| `SecureSettingsRepository.kt` | Interfaz + `SharedPreferencesSettingsRepository` sobre un `SharedPreferences` inyectable (claves `ai_provider`/`ai_api_key`/`ai_model`). |
+| `SecureSettings.kt` | Fábrica de producción: `EncryptedSharedPreferences` (`MasterKey` AES256-GCM en el Keystore). Fichero `nexanote_ai_secure_prefs`. |
+| `AiProvider.kt` | Interfaz `AiProvider` + `AiRequest`/`AiResult` + `AssistKind`/`AssistPrompt` (prompt de sistema por tipo). |
+| `AiRequestBodies.kt` | Serialización **pura** del cuerpo JSON (OpenAI chat / Anthropic messages). La clave nunca entra en el cuerpo. Tests JVM. |
+| `HttpAiProvider.kt` | Base HTTP con `HttpURLConnection` en `Dispatchers.IO` (sin cliente de terceros); `OpenAiProvider` (`Bearer`), `AnthropicProvider` (`x-api-key`); `AiProviders.forSettings`. No registra la clave. |
+| `AiViewModel.kt` | `settings: StateFlow<AiSettings>` + `saveSettings`/`clearSettings`; `assist: StateFlow<AssistUiState>` + `explain(content, kind)`/`dismissAssist`. Disco y red fuera del hilo principal. |
+
+UI: `AiScreens.kt` (`AiSettingsDialog`, `AssistDialog`), iconos `NexaIcons.Settings`/`NexaIcons.Assistant` en la `TopAppBar`. `MainActivity` inyecta `AiViewModel(SecureSettings.create(...))`. Permiso `INTERNET` añadido al manifest. La API key sólo se persiste cifrada; nunca en logs, código ni Git.
 
 ---
 

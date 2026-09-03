@@ -397,6 +397,80 @@ object NexaIcons {
         }
     }
 
+    /** Ajustes: rueda dentada con eje central. */
+    val Settings: ImageVector by lazy {
+        vector("nexa_settings", PathFillType.EvenOdd) {
+            // Corona dentada aproximada (octágono con muescas) + hueco central.
+            moveTo(10.5f, 2f)
+            lineTo(13.5f, 2f)
+            lineTo(14f, 4.4f)
+            lineTo(16.1f, 5.3f)
+            lineTo(18.2f, 4f)
+            lineTo(20f, 5.8f)
+            lineTo(18.7f, 7.9f)
+            lineTo(19.6f, 10f)
+            lineTo(22f, 10.5f)
+            lineTo(22f, 13.5f)
+            lineTo(19.6f, 14f)
+            lineTo(18.7f, 16.1f)
+            lineTo(20f, 18.2f)
+            lineTo(18.2f, 20f)
+            lineTo(16.1f, 18.7f)
+            lineTo(14f, 19.6f)
+            lineTo(13.5f, 22f)
+            lineTo(10.5f, 22f)
+            lineTo(10f, 19.6f)
+            lineTo(7.9f, 18.7f)
+            lineTo(5.8f, 20f)
+            lineTo(4f, 18.2f)
+            lineTo(5.3f, 16.1f)
+            lineTo(4.4f, 14f)
+            lineTo(2f, 13.5f)
+            lineTo(2f, 10.5f)
+            lineTo(4.4f, 10f)
+            lineTo(5.3f, 7.9f)
+            lineTo(4f, 5.8f)
+            lineTo(5.8f, 4f)
+            lineTo(7.9f, 5.3f)
+            lineTo(10f, 4.4f)
+            close()
+            moveTo(12f, 8.5f)
+            arcToRelative(3.5f, 3.5f, 0f, isMoreThanHalf = true, isPositiveArc = true, 0f, 7f)
+            arcToRelative(3.5f, 3.5f, 0f, isMoreThanHalf = true, isPositiveArc = true, 0f, -7f)
+            close()
+        }
+    }
+
+    /** Asistente de IA: bocadillo de diálogo con una chispa. */
+    val Assistant: ImageVector by lazy {
+        vector("nexa_assistant", PathFillType.EvenOdd) {
+            // Bocadillo (anillo rectangular con pico).
+            moveTo(3f, 4f)
+            lineTo(21f, 4f)
+            lineTo(21f, 16f)
+            lineTo(9f, 16f)
+            lineTo(5f, 20f)
+            lineTo(5f, 16f)
+            lineTo(3f, 16f)
+            close()
+            moveTo(5f, 6f)
+            lineTo(19f, 6f)
+            lineTo(19f, 14f)
+            lineTo(5f, 14f)
+            close()
+            // Chispa central.
+            moveTo(12f, 7f)
+            lineTo(12.9f, 9.1f)
+            lineTo(15f, 10f)
+            lineTo(12.9f, 10.9f)
+            lineTo(12f, 13f)
+            lineTo(11.1f, 10.9f)
+            lineTo(9f, 10f)
+            lineTo(11.1f, 9.1f)
+            close()
+        }
+    }
+
     val Refresh: ImageVector by lazy {
         vector("nexa_refresh") {
             moveTo(17.65f, 6.35f)

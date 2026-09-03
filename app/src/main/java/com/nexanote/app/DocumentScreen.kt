@@ -44,6 +44,7 @@ import com.nexanote.app.canvas.DocumentCanvas
 import com.nexanote.app.canvas.DrawingTool
 import com.nexanote.app.canvas.GraphInput
 import com.nexanote.app.canvas.NexaIcons
+import com.nexanote.app.ai.AiViewModel
 
 /**
  * Pantalla de visualización de documento (Fase 3): carga el documento de ejemplo
@@ -52,10 +53,18 @@ import com.nexanote.app.canvas.NexaIcons
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DocumentScreen(viewModel: DocumentViewModel = viewModel()) {
+fun DocumentScreen(
+    viewModel: DocumentViewModel = viewModel(),
+    aiViewModel: AiViewModel,
+) {
     val state by viewModel.state.collectAsState()
     val history by viewModel.history.collectAsState()
     val export by viewModel.export.collectAsState()
+
+    val aiSettings by aiViewModel.settings.collectAsState()
+    val assist by aiViewModel.assist.collectAsState()
+    var showAiSettings by remember { mutableStateOf(false) }
+    var showAssistant by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -86,6 +95,12 @@ fun DocumentScreen(viewModel: DocumentViewModel = viewModel()) {
             TopAppBar(
                 title = { Text("NexaNote") },
                 actions = {
+                    IconButton(onClick = { showAssistant = true }) {
+                        Icon(NexaIcons.Assistant, contentDescription = "Asistente de IA")
+                    }
+                    IconButton(onClick = { showAiSettings = true }) {
+                        Icon(NexaIcons.Settings, contentDescription = "Ajustes de IA")
+                    }
                     IconButton(
                         onClick = { pdfLauncher.launch("NexaNote.pdf") },
                         enabled = state is SceneUiState.Ready && export.phase != ExportPhase.Working,
@@ -246,6 +261,32 @@ fun DocumentScreen(viewModel: DocumentViewModel = viewModel()) {
                 }
             }
         }
+    }
+
+    if (showAiSettings) {
+        AiSettingsDialog(
+            current = aiSettings,
+            onDismiss = { showAiSettings = false },
+            onSave = { provider, key, model ->
+                aiViewModel.saveSettings(provider, key, model)
+                showAiSettings = false
+            },
+            onClear = {
+                aiViewModel.clearSettings()
+                showAiSettings = false
+            },
+        )
+    }
+
+    if (showAssistant) {
+        AssistDialog(
+            state = assist,
+            onDismiss = {
+                showAssistant = false
+                aiViewModel.dismissAssist()
+            },
+            onExplain = aiViewModel::explain,
+        )
     }
 }
 
